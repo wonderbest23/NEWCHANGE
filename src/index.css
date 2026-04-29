@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+
+@theme {
+  /* 따뜻한 케어 톤 */
+  --color-care-cream: #fbf7f2;
+  --color-care-ink: #2c2825;
+  --color-care-muted: #6b6560;
+  --color-care-rose: #b84a4a;
+  --color-care-sage: #2f5d45;
+  --font-sans: ui-sans-serif, system-ui, 'Segoe UI', Roboto, 'Noto Sans KR',
+    sans-serif;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply m-0 min-h-svh bg-care-cream text-care-ink antialiased;
+  }
+
+  #root {
+    @apply min-h-svh;
+  }
+}
