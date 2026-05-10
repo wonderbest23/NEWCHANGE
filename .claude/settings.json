@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsof -ti:8080)",
+      "Bash(curl -s -X POST https://nurpesdatxgspsifsllu.supabase.co/auth/v1/admin/users -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s 'https://nurpesdatxgspsifsllu.supabase.co/rest/v1/user_roles?select=*&limit=3' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o')",
+      "Bash(curl -s -X POST https://nurpesdatxgspsifsllu.supabase.co/rest/v1/rpc/assign_admin_role -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'Content-Type: application/json')",
+      "Bash(curl -s -X POST https://nurpesdatxgspsifsllu.supabase.co/rest/v1/rpc/exec_sql -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'Content-Type: application/json' -d '{\"query\": \"INSERT INTO public.user_roles \\(user_id, role\\) VALUES \\('\\\\''83d247e5-6e6c-4144-a220-3fd87d0bece7'\\\\'', '\\\\''admin'\\\\''\\) ON CONFLICT \\(user_id, role\\) DO NOTHING;\"}')",
+      "Bash(curl -s -X POST https://api.supabase.com/v1/projects/nurpesdatxgspsifsllu/database/query -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'Content-Type: application/json' -d '{\"query\":\"INSERT INTO public.user_roles \\(user_id, role\\) VALUES \\('\\\\''83d247e5-6e6c-4144-a220-3fd87d0bece7'\\\\'', '\\\\''admin'\\\\''\\) ON CONFLICT DO NOTHING;\"}')",
+      "Bash(curl -s -X POST https://nurpesdatxgspsifsllu.supabase.co/rest/v1/profiles -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'Content-Type: application/json' -H 'Prefer: return=minimal' -d '{\"id\":\"83d247e5-6e6c-4144-a220-3fd87d0bece7\",\"nickname\":\"관리자\",\"verified\":true}')",
+      "Bash(curl -s -X POST https://nurpesdatxgspsifsllu.supabase.co/rest/v1/user_roles -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'Content-Type: application/json' -H 'Prefer: return=minimal' -d '{\"user_id\":\"83d247e5-6e6c-4144-a220-3fd87d0bece7\",\"role\":\"admin\"}')",
+      "Bash(curl -s 'https://nurpesdatxgspsifsllu.supabase.co/rest/v1/profiles?id=eq.83d247e5-6e6c-4144-a220-3fd87d0bece7&select=*' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM3Nzc0NywiZXhwIjoyMDkyOTUzNzQ3fQ.yHy6UewkBFR9jijpxbqsljfv4-CjcCqvA_fuvvrd48o')",
+      "Bash(npx supabase *)",
+      "Bash(curl -s -X POST 'https://nurpesdatxgspsifsllu.supabase.co/auth/v1/token?grant_type=password' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNzc3NDcsImV4cCI6MjA5Mjk1Mzc0N30.KKuLo8WiXhFmCSf7fDkFwX_8ecvrAOunTm1YkaHdBQ0' -H 'Content-Type: application/json' -d '{\"email\":\"admin@test.com\",\"password\":\"123456789\"}')",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -c /tmp/test-cookies.txt -X POST 'https://nurpesdatxgspsifsllu.supabase.co/auth/v1/token?grant_type=password' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNzc3NDcsImV4cCI6MjA5Mjk1Mzc0N30.KKuLo8WiXhFmCSf7fDkFwX_8ecvrAOunTm1YkaHdBQ0' -H 'Content-Type: application/json' -d '{\"email\":\"admin@test.com\",\"password\":\"123456789\"}')",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s http://localhost:8080/auth)",
+      "Bash(kill 5675)",
+      "Bash(echo \"PID: $!\")",
+      "Read(//tmp/**)",
+      "Bash(sleep 3 && echo \"=== LATEST SERVER LOGS ===\" && cat /tmp/dev-server.log | grep -E \"error|Error|401|403|500|warn|WARN|auth|login|sign\" --color=never | tail -50)",
+      "Read(//private/tmp/**)",
+      "Bash(npx tsc *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/)",
+      "Bash(curl -s http://localhost:8080/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/auth)",
+      "Bash(curl -s \"http://localhost:8080/src/lib/care/simulator-actions.ts\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(u['email'], u['id'], u.get\\('email_confirmed_at','NO_CONFIRM'\\)\\) for u in d.get\\('users',[]\\)]\")",
+      "Bash(kill 58748)",
+      "Bash(kill -9 58748)",
+      "Bash(echo \"Started PID: $!\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('main:', d.get\\('main'\\)\\); print\\('module:', d.get\\('module'\\)\\); print\\('exports:', d.get\\('exports'\\)\\); print\\('type:', d.get\\('type'\\)\\)\")",
+      "Bash(npm install *)",
+      "Bash([ -f \"/Users/juhong/Desktop/NEWCHANGE-main/node_modules/$pkg/dev/index.js\" ])",
+      "Bash(rm -rf /Users/juhong/Desktop/NEWCHANGE-main/node_modules/.vite && npm run dev > /tmp/dev-server.log 2>&1 & *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:8080/)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:8080/auth)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('package manager:', d.get\\('packageManager','npm'\\)\\); print\\('deps:', len\\(d.get\\('dependencies',{}\\)\\)\\); print\\('devDeps:', len\\(d.get\\('devDependencies',{}\\)\\)\\)\")"
+    ],
+    "additionalDirectories": [
+      "/private/tmp"
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+---
+description: Core execution rules adapted from CLAUDE.md
+alwaysApply: true
+---
+
+# Core Execution Guidelines
+
+Apply these rules to every coding task.
+
+## 1) Think Before Coding
+- State assumptions explicitly before implementation.
+- If requirements are ambiguous, ask clarifying questions first.
+- If multiple interpretations are possible, present options instead of choosing silently.
+- Prefer the simplest viable approach and say when a simpler option exists.
+
+## 2) Simplicity First
+- Implement only what was requested.
+- Avoid speculative abstractions or configurability.
+- Do not add handling for impossible scenarios.
+- If a solution feels overengineered, simplify it.
+
+## 3) Surgical Changes
+- Edit only lines directly related to the request.
+- Do not refactor or reformat unrelated nearby code.
+- Match existing project style and conventions.
+- Remove only dead code introduced by your own change.
+
+## 4) Goal-Driven Verification
+- Define clear, testable success criteria before major edits.
+- For multi-step work, outline short step-by-step checks.
+- Verify outcomes with tests, linting, or run commands when possible.
+- Report blockers and evidence instead of guessing.
