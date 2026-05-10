@@ -45,7 +45,7 @@ function SeniorHome() {
   const navigate = useNavigate();
   const { data: today } = useTodayCheckin({ enabled: isAuthenticated });
   const invalidateToday = useInvalidateTodayCheckin();
-  const [tab, setTab] = useState<Tab>("today");
+  const [tab, setTab] = useState<Tab>("details");
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {

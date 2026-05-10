@@ -1,4 +1,4 @@
-// Lovable AI Gateway 호출용 공용 엣지 함수.
+// OpenAI 직접 호출 공용 엣지 함수.
 // task: "polish" (글 다듬기) | "answer" (법률/복지 1차 답변)
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
@@ -42,47 +42,40 @@ serve(async (req) => {
       return json({ error: "지원하지 않는 task입니다." }, 400);
     }
 
-    const apiKey = Deno.env.get("LOVABLE_API_KEY");
-    if (!apiKey) return json({ error: "LOVABLE_API_KEY 미설정" }, 500);
+    const apiKey = Deno.env.get("OPENAI_API_KEY");
+    if (!apiKey) return json({ error: "OPENAI_API_KEY 미설정" }, 500);
 
     const userMsg =
       task === "polish"
         ? `다음 시니어 회원이 쓴 글을 다듬어 주세요.\n\n[제목]\n${title ?? "(제목 없음)"}\n\n[본문]\n${body}`
         : `카테고리: ${category ?? "일반"}\n\n[질문 제목]\n${title ?? "(제목 없음)"}\n\n[질문 본문]\n${body}\n\n위 질문에 대한 1차 안내를 작성해 주세요.`;
 
-    const resp = await fetch(
-      "https://ai.gateway.lovable.dev/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
-          messages: [
-            { role: "system", content: SYSTEM[task as Task] },
-            { role: "user", content: userMsg },
-          ],
-        }),
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: SYSTEM[task as Task] },
+          { role: "user", content: userMsg },
+        ],
+        max_tokens: 1024,
+        temperature: 0.7,
+      }),
+    });
 
     if (resp.status === 429) {
-      return json(
-        { error: "요청이 잠시 많아요. 잠시 후 다시 시도해 주세요." },
-        429,
-      );
+      return json({ error: "요청이 잠시 많아요. 잠시 후 다시 시도해 주세요." }, 429);
     }
-    if (resp.status === 402) {
-      return json(
-        { error: "AI 사용 크레딧이 부족합니다. 워크스페이스 결제를 확인해 주세요." },
-        402,
-      );
+    if (resp.status === 402 || resp.status === 401) {
+      return json({ error: "OpenAI API 키를 확인해 주세요." }, 402);
     }
     if (!resp.ok) {
       const t = await resp.text();
-      console.error("AI gateway error:", resp.status, t);
+      console.error("OpenAI error:", resp.status, t);
       return json({ error: "AI 응답 생성에 실패했어요." }, 500);
     }
 

@@ -19,6 +19,8 @@ import {
   Globe2,
   Lightbulb,
   ArrowRight,
+  ChevronDown,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WalkLeaderboard } from "@/components/engagement/WalkLeaderboard";
@@ -116,6 +118,8 @@ function CommunityIndex() {
     [counts],
   );
 
+  const [showCategories, setShowCategories] = useState(false);
+
   const activeCatLabel =
     activeCat === "all"
       ? "전체"
@@ -132,12 +136,30 @@ function CommunityIndex() {
             </h1>
           </div>
 
-          {/* 동네/전국 — 한 줄 세그먼트 토글 */}
+          {/* 동네/전국 — 전국 먼저, 동네 두 번째 */}
           <div
             role="tablist"
             aria-label="지역 범위"
             className="mt-4 grid grid-cols-2 rounded-full border-2 border-border bg-surface p-1"
           >
+            {/* 전국 */}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={scope === "all"}
+              onClick={() => setScope("all")}
+              className={cn(
+                "flex min-h-[44px] items-center justify-center gap-1.5 rounded-full text-sm font-semibold transition-all duration-200",
+                scope === "all"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-foreground/70 hover:text-foreground",
+              )}
+            >
+              <Globe2 className="h-4 w-4" />
+              전국
+            </button>
+
+            {/* 우리 동네 — 펄스 애니메이션으로 이동 가능 암시 */}
             <button
               type="button"
               role="tab"
@@ -145,63 +167,85 @@ function CommunityIndex() {
               disabled={!userSigungu}
               onClick={() => userSigungu && setScope("local")}
               className={cn(
-                "flex min-h-[44px] items-center justify-center gap-1.5 rounded-full text-sm font-semibold transition",
+                "relative flex min-h-[44px] items-center justify-center gap-1.5 overflow-hidden rounded-full text-sm font-semibold transition-all duration-200",
                 scope === "local"
                   ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-foreground/70",
+                  : "text-foreground/70 hover:text-foreground",
                 !userSigungu && "cursor-not-allowed opacity-40",
               )}
             >
-              <MapPin className="h-4 w-4" />
-              <span>{userSigungu || "우리 동네"}</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={scope === "all"}
-              onClick={() => setScope("all")}
-              className={cn(
-                "flex min-h-[44px] items-center justify-center gap-1.5 rounded-full text-sm font-semibold transition",
-                scope === "all"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-foreground/70",
+              {/* 동네 버튼이 비활성 상태일 때 shimmer 효과 */}
+              {scope !== "local" && userSigungu && (
+                <span
+                  className="pointer-events-none absolute inset-y-0 w-1/2 animate-[shimmer-slide_2.5s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-primary/20 to-transparent"
+                  aria-hidden
+                />
               )}
-            >
-              <Globe2 className="h-4 w-4" />
-              전국
+              <MapPin className={cn("h-4 w-4 shrink-0", scope !== "local" && userSigungu && "animate-bounce")} />
+              <span>{userSigungu || "우리 동네"}</span>
             </button>
           </div>
 
-          {/* 카테고리 — 핵심 영역 */}
-          <div className="mt-5">
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-              <CatTile
-                active={activeCat === "all"}
-                onClick={() => setActiveCat("all")}
-                label="전체"
-                count={totalCount}
+          {/* 카테고리 — 토글 방식 */}
+          <div className="mt-4">
+            {/* 현재 카테고리 + 필터 열기 버튼 */}
+            <button
+              type="button"
+              onClick={() => setShowCategories((v) => !v)}
+              className={cn(
+                "flex w-full items-center justify-between gap-3 rounded-2xl border-2 px-4 py-3 transition-all",
+                showCategories
+                  ? "border-primary/60 bg-primary/5"
+                  : "border-border/60 bg-surface/60 hover:border-border",
+              )}
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <SlidersHorizontal className="h-4 w-4 text-primary" />
+                게시판
+                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-bold text-primary">
+                  {activeCatLabel}
+                </span>
+              </span>
+              <ChevronDown
+                className={cn(
+                  "h-4 w-4 shrink-0 text-foreground/50 transition-transform duration-200",
+                  showCategories && "rotate-180",
+                )}
               />
-              {CATEGORIES.map((c) => {
-                const Icon = c.icon;
-                const isAgency = c.slug === "agency";
-                return (
-                  <CatTile
-                    key={c.slug}
-                    active={activeCat === c.slug}
-                    onClick={() => {
-                      if (isAgency) {
-                        navigate({ to: "/agencies" });
-                      } else {
-                        setActiveCat(c.slug);
-                      }
-                    }}
-                    label={isAgency ? "대행업체" : c.name}
-                    icon={<Icon className="h-5 w-5" />}
-                    count={isAgency ? undefined : counts[c.slug] ?? 0}
-                  />
-                );
-              })}
-            </div>
+            </button>
+
+            {/* 카테고리 그리드 — 펼쳐질 때만 표시 */}
+            {showCategories && (
+              <div className="mt-2 grid grid-cols-3 gap-2 rounded-2xl border-2 border-border/50 bg-surface/40 p-3 sm:grid-cols-4">
+                <CatTile
+                  active={activeCat === "all"}
+                  onClick={() => { setActiveCat("all"); setShowCategories(false); }}
+                  label="전체"
+                  count={totalCount}
+                />
+                {CATEGORIES.map((c) => {
+                  const Icon = c.icon;
+                  const isAgency = c.slug === "agency";
+                  return (
+                    <CatTile
+                      key={c.slug}
+                      active={activeCat === c.slug}
+                      onClick={() => {
+                        if (isAgency) {
+                          navigate({ to: "/agencies" });
+                        } else {
+                          setActiveCat(c.slug);
+                          setShowCategories(false);
+                        }
+                      }}
+                      label={isAgency ? "대행업체" : c.name}
+                      icon={<Icon className="h-5 w-5" />}
+                      count={isAgency ? undefined : counts[c.slug] ?? 0}
+                    />
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* 부가 정보는 접어두기 — 가독성 우선 */}

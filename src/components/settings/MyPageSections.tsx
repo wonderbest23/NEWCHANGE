@@ -344,29 +344,38 @@ export function MyPageSections() {
           <Bell className="h-5 w-5 text-primary" />
           <h2 className="font-display text-xl text-foreground">알림 설정</h2>
         </div>
-        <div className="mt-5 flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="notif-time" className="text-base">건강체크 알림 시간</Label>
+        <div className="mt-4 overflow-hidden rounded-xl border border-border/60">
+          {/* 건강체크 시간 */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <Label htmlFor="notif-time" className="text-sm font-medium text-foreground">
+              건강체크 알림 시간
+            </Label>
             <Input
               id="notif-time"
               type="time"
               value={notif.checkinTime}
               onChange={(e) => updateNotif({ checkinTime: e.target.value })}
-              className="h-[44px] w-36 rounded-xl px-3 text-fluid-sm leading-none"
+              className="h-9 w-32 rounded-lg px-3 text-sm"
             />
           </div>
-          <div className="flex min-h-[44px] items-center justify-between gap-3 border-t border-border pt-2">
-            <span className="text-base">식사 알림</span>
+          <div className="border-t border-border/60" />
+          {/* 식사 알림 */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className="text-sm font-medium text-foreground">식사 알림</span>
             <Switch checked={notif.meal} onCheckedChange={(v) => updateNotif({ meal: v })} />
           </div>
-          <div className="flex min-h-[44px] items-center justify-between gap-3 border-t border-border pt-2">
-            <span className="text-base">약 복용 알림</span>
+          <div className="border-t border-border/60" />
+          {/* 약 복용 알림 */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <span className="text-sm font-medium text-foreground">약 복용 알림</span>
             <Switch checked={notif.medicine} onCheckedChange={(v) => updateNotif({ medicine: v })} />
           </div>
-          <div className="flex min-h-[44px] items-center justify-between gap-3 border-t border-border pt-2">
+          <div className="border-t border-border/60" />
+          {/* 보호자 공유 */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
             <div>
-              <p className="text-base">보호자에게 공유</p>
-              <p className="text-xs text-foreground/60">기본 기록을 보호자에게 자동으로 공유해요</p>
+              <p className="text-sm font-medium text-foreground">보호자에게 공유</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">기록을 보호자에게 자동으로 공유해요</p>
             </div>
             <Switch
               checked={notif.shareToGuardian}

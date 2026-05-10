@@ -583,7 +583,7 @@ function DistrictSection({
 }
 
 /* ─────────────────────────────────────────────────────────
- * ResourceCard — 단일 자원 카드 (자치구 섹션 내부)
+ * ResourceCard — 정보 표시 카드 (클릭 유도 없음, 액션은 하단 버튼만)
  * ───────────────────────────────────────────────────────── */
 function ResourceCard({
   r,
@@ -606,114 +606,100 @@ function ResourceCard({
     else { navigator.clipboard?.writeText(text); toast.success("링크를 복사했어요"); }
   };
 
-  // 카드 전체 클릭 시 동작 — source_url 있으면 새 탭 열고, 없고 phone 만 있으면 전화 걸기
-  const cardHref = r.source_url ?? (r.phone ? `tel:${r.phone}` : null);
-  const cardTarget = r.source_url ? "_blank" : undefined;
-  const cardRel = r.source_url ? "noreferrer" : undefined;
+  const hasActions = !!(r.phone || r.source_url);
 
-  // 액션 버튼 클릭이 카드 전체 링크로 전파되지 않도록 막음
-  const stop = (e: React.MouseEvent) => {
-    e.stopPropagation();
-  };
-
-  const inner = (
-    <>
-      {/* 카드 헤더 — 이름 + (있으면) 거리 */}
-      <div className="flex items-start justify-between gap-2">
-        <p className="min-w-0 flex-1 break-words text-base font-bold leading-snug text-foreground line-clamp-2 group-hover:text-primary">{r.name}</p>
-        {distLabel && (
-          <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
-            {distLabel}
-          </span>
-        )}
-      </div>
-
-      {/* 주소 / 일정 */}
-      <div className="min-w-0 space-y-1 text-[13px] leading-snug text-foreground/70">
-        {r.address && (
-          <div className="flex min-w-0 items-start gap-1.5">
-            <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground/40" />
-            <span className="min-w-0 flex-1 truncate">{r.address}</span>
-          </div>
-        )}
-        {r.start_date && (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Calendar className="h-3.5 w-3.5 shrink-0 text-foreground/40" />
-            <span className="min-w-0 flex-1 truncate">{r.start_date}{r.end_date && r.end_date !== r.start_date ? ` ~ ${r.end_date}` : ""}</span>
-          </div>
-        )}
-      </div>
-
-      {/* 설명 — 있을 때만 (행사 위주) */}
-      {r.description && (
-        <p className="break-words text-[13px] leading-snug text-foreground/55 line-clamp-2">{r.description}</p>
-      )}
-
-      {/* 태그 — 카테고리 색 적용, 최대 3개 */}
-      {r.recommendation_tags && r.recommendation_tags.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {r.recommendation_tags.slice(0, 3).map((t) => (
-            <span key={t} className={`max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-medium ${meta.chip}`}>
-              #{t}
+  return (
+    <li className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border/50 bg-background">
+      {/* 정보 영역 — 클릭 유도 없음 */}
+      <div className="flex flex-1 flex-col gap-2.5 p-4">
+        {/* 이름 + 거리 */}
+        <div className="flex items-start justify-between gap-2">
+          <p className="min-w-0 flex-1 break-words text-xl font-bold leading-snug text-foreground">
+            {r.name}
+          </p>
+          {distLabel && (
+            <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+              {distLabel}
             </span>
-          ))}
+          )}
         </div>
-      )}
 
-      {/* 액션 버튼 — 카드 전체 링크와 분리 (stopPropagation) */}
-      <div className="mt-1 flex min-w-0 items-center gap-1.5" onClick={stop}>
+        {/* 주소 / 일정 */}
+        <div className="min-w-0 space-y-1.5">
+          {r.address && (
+            <div className="flex min-w-0 items-start gap-1.5 text-sm text-foreground/70">
+              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-foreground/40" />
+              <span className="min-w-0 flex-1 break-words leading-snug">{r.address}</span>
+            </div>
+          )}
+          {r.start_date && (
+            <div className="flex min-w-0 items-center gap-1.5 text-sm text-foreground/70">
+              <Calendar className="h-4 w-4 shrink-0 text-foreground/40" />
+              <span className="min-w-0 flex-1 truncate">
+                {r.start_date}{r.end_date && r.end_date !== r.start_date ? ` ~ ${r.end_date}` : ""}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* 설명 */}
+        {r.description && (
+          <p className="break-words text-sm leading-relaxed text-foreground/60 line-clamp-2">
+            {r.description}
+          </p>
+        )}
+
+        {/* 태그 */}
+        {r.recommendation_tags && r.recommendation_tags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {r.recommendation_tags.slice(0, 3).map((t) => (
+              <span key={t} className={`max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium ${meta.chip}`}>
+                #{t}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 액션 바 — 항상 하단에 분리된 영역 */}
+      <div className="flex items-center gap-1.5 border-t border-border/40 bg-surface/50 px-3 py-2.5">
         {r.phone && (
-          <Button asChild size="sm" className="h-9 min-w-0 flex-1 gap-1 rounded-full px-2 text-xs">
-            <a href={`tel:${r.phone}`} className="inline-flex items-center justify-center gap-1 truncate" onClick={stop}>
-              <Phone className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">전화</span>
-            </a>
-          </Button>
+          <a
+            href={`tel:${r.phone}`}
+            className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-primary px-3 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+          >
+            <Phone className="h-3.5 w-3.5" />
+            전화하기
+          </a>
         )}
         {r.source_url && (
-          <Button asChild size="sm" variant={r.phone ? "outline" : "default"} className="h-9 min-w-0 flex-1 gap-1 rounded-full px-2 text-xs">
-            <a href={r.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center truncate" onClick={stop}>
-              <span className="truncate">자세히 ↗</span>
-            </a>
-          </Button>
+          <a
+            href={r.source_url}
+            target="_blank"
+            rel="noreferrer"
+            className={`inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full border border-border px-3 text-sm font-medium text-foreground transition hover:border-primary/50 hover:text-primary ${r.phone ? "" : "bg-background"}`}
+          >
+            자세히 보기 ↗
+          </a>
         )}
-        {!r.phone && !r.source_url && <span className="flex-1" />}
-        <Button size="sm" variant="ghost" className="h-9 w-9 shrink-0 rounded-full p-0" onClick={(e) => { stop(e); share(); }} aria-label="가족에게 공유">
-          <Share2 className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          size="sm"
-          variant={saved ? "default" : "ghost"}
-          className="h-9 w-9 shrink-0 rounded-full p-0"
-          onClick={(e) => { stop(e); onSave(r.id); }}
+        {!hasActions && <span className="flex-1 text-xs text-muted-foreground">정보 참고용</span>}
+        <button
+          type="button"
+          onClick={share}
+          aria-label="공유"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        >
+          <Share2 className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => onSave(r.id)}
           aria-label={saved ? "저장 해제" : "저장"}
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition ${saved ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
         >
-          <Bookmark className="h-3.5 w-3.5" />
-        </Button>
+          {saved ? <Check className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
+        </button>
       </div>
-    </>
-  );
-
-  // 클릭 가능한 자원: 외부링크 또는 전화번호 → 카드 전체를 a 태그로 감쌈
-  // 클릭 불가능한 자원(둘 다 없음): 평범한 div
-  if (cardHref) {
-    return (
-      <li className="contents">
-        <a
-          href={cardHref}
-          target={cardTarget}
-          rel={cardRel}
-          className="group flex min-w-0 cursor-pointer flex-col gap-2 overflow-hidden rounded-2xl border border-border/60 bg-background p-3.5 text-foreground transition hover:border-primary/60 hover:shadow-soft active:scale-[0.99]"
-          aria-label={`${r.name} 자세히 보기`}
-        >
-          {inner}
-        </a>
-      </li>
-    );
-  }
-  return (
-    <li className="group flex min-w-0 flex-col gap-2 overflow-hidden rounded-2xl border border-border/60 bg-background p-3.5 transition hover:border-primary/40 hover:shadow-soft">
-      {inner}
     </li>
   );
 }

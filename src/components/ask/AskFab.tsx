@@ -315,7 +315,7 @@ export function AskFab() {
       {isCommunity && !callActive && (
         <div
           className="fixed inset-x-0 z-50 flex gap-3 bg-background/95 px-5 py-3 backdrop-blur-xl border-t border-border/50"
-          style={{ bottom: "calc(env(safe-area-inset-bottom) + 72px)" }}
+          style={{ bottom: "calc(env(safe-area-inset-bottom) + 82px)" }}
         >
           {isAuthenticated ? (
             <Link

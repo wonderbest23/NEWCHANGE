@@ -1,9 +1,14 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getMyBadges } from "@/lib/engagement/badges-actions";
 import { authHeaders } from "@/lib/auth/server-fn-headers";
 import { cn } from "@/lib/utils";
+import { ChevronDown } from "lucide-react";
+
+const INITIAL_VISIBLE = 5;
 
 export function BadgesSection() {
+  const [showAll, setShowAll] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["my-badges"],
     queryFn: async () =>
@@ -52,81 +57,110 @@ export function BadgesSection() {
           </div>
 
           {/* 배지 리스트 — 세로 카드, 수평 진행률 */}
-          <ul className="mt-4 flex flex-col gap-2 px-3 pb-5">
-            {data.badges.map((b) => {
-              const pct = b.progress
-                ? Math.min(100, (b.progress.current / b.progress.target) * 100)
-                : b.earned
-                  ? 100
-                  : 0;
-              return (
-                <li
-                  key={b.key}
-                  className={cn(
-                    "group relative flex items-center gap-4 rounded-2xl px-3 py-3 transition-all",
-                    b.earned ? "bg-surface/80" : "hover:bg-surface/40",
-                  )}
-                >
-                  {/* 아이콘 원 */}
-                  <div
-                    className={cn(
-                      "relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-2xl transition-all",
-                      b.earned
-                        ? "bg-gradient-to-br from-rose-soft to-amber-soft shadow-soft"
-                        : "bg-muted/50 grayscale opacity-60",
-                    )}
-                  >
-                    <span aria-hidden>{b.emoji}</span>
-                    {b.earned && (
-                      <span
-                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground shadow-soft"
-                        aria-label="달성 완료"
-                      >
-                        ✓
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 본문 */}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p
+          {(() => {
+            const visible = showAll ? data.badges : data.badges.slice(0, INITIAL_VISIBLE);
+            const hidden = data.badges.length - INITIAL_VISIBLE;
+            return (
+              <>
+                <ul className="mt-4 flex flex-col gap-2 px-3">
+                  {visible.map((b) => {
+                    const pct = b.progress
+                      ? Math.min(100, (b.progress.current / b.progress.target) * 100)
+                      : b.earned
+                        ? 100
+                        : 0;
+                    return (
+                      <li
+                        key={b.key}
                         className={cn(
-                          "truncate font-display text-base font-semibold",
-                          b.earned ? "text-foreground" : "text-foreground/70",
+                          "group relative flex items-center gap-4 rounded-2xl px-3 py-3 transition-all",
+                          b.earned ? "bg-surface/80" : "hover:bg-surface/40",
                         )}
                       >
-                        {b.title}
-                      </p>
-                      {b.earned ? (
-                        <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-primary">
-                          달성
-                        </span>
-                      ) : b.progress ? (
-                        <span className="shrink-0 font-mono text-xs tabular-nums text-foreground/50">
-                          {b.progress.current}
-                          <span className="text-foreground/30">/{b.progress.target}</span>
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-0.5 truncate text-fluid-sm text-foreground/55">
-                      {b.description}
-                    </p>
-
-                    {/* 가는 진행률 바 */}
-                    {!b.earned && b.progress && (
-                      <div className="mt-2 h-1 overflow-hidden rounded-full bg-border/60">
+                        {/* 아이콘 원 */}
                         <div
-                          className="h-full rounded-full bg-gradient-to-r from-primary/60 to-primary transition-all duration-500"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
+                          className={cn(
+                            "relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-2xl transition-all",
+                            b.earned
+                              ? "bg-gradient-to-br from-rose-soft to-amber-soft shadow-soft"
+                              : "bg-muted/50 grayscale opacity-60",
+                          )}
+                        >
+                          <span aria-hidden>{b.emoji}</span>
+                          {b.earned && (
+                            <span
+                              className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground shadow-soft"
+                              aria-label="달성 완료"
+                            >
+                              ✓
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 본문 */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <p
+                              className={cn(
+                                "truncate font-display text-base font-semibold",
+                                b.earned ? "text-foreground" : "text-foreground/70",
+                              )}
+                            >
+                              {b.title}
+                            </p>
+                            {b.earned ? (
+                              <span className="shrink-0 text-[11px] font-bold uppercase tracking-wider text-primary">
+                                달성
+                              </span>
+                            ) : b.progress ? (
+                              <span className="shrink-0 font-mono text-xs tabular-nums text-foreground/50">
+                                {b.progress.current}
+                                <span className="text-foreground/30">/{b.progress.target}</span>
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-0.5 truncate text-fluid-sm text-foreground/55">
+                            {b.description}
+                          </p>
+
+                          {/* 가는 진행률 바 */}
+                          {!b.earned && b.progress && (
+                            <div className="mt-2 h-1 overflow-hidden rounded-full bg-border/60">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-primary/60 to-primary transition-all duration-500"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                {/* 더보기 / 접기 버튼 */}
+                {data.badges.length > INITIAL_VISIBLE && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAll((v) => !v)}
+                    className="flex w-full items-center justify-center gap-1.5 border-t border-border/50 py-3 text-sm font-medium text-foreground/60 transition hover:text-foreground"
+                  >
+                    {showAll ? (
+                      <>
+                        <ChevronDown className="h-4 w-4 rotate-180 transition-transform" />
+                        접기
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="h-4 w-4 transition-transform" />
+                        {hidden}개 더보기
+                      </>
                     )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </>
       )}
     </section>

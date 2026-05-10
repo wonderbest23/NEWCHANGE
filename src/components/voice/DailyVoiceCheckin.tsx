@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { Mic, MicOff, PhoneOff, Phone, Sparkles, Loader2, Moon } from "lucide-react";
+import { Mic, MicOff, PhoneOff, Phone, Sparkles, Loader2, Moon, ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createRealtimeSession } from "@/lib/voice-test-actions";
@@ -886,7 +886,6 @@ function NextCallNotice() {
 // ───────────────────────── 감정 기반 권고 카루셀 ─────────────────────────
 function EmotionRecsCarousel({ emotionKey }: { emotionKey: string }) {
   const recs = getEmotionRecommendations(emotionKey as any).slice(0, 3);
-  const scrollerRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
 
   if (recs.length === 0) return null;
@@ -897,75 +896,62 @@ function EmotionRecsCarousel({ emotionKey }: { emotionKey: string }) {
     keep: "border-sage/40 bg-sage/15 text-sage",
   };
 
-  const handleScroll = () => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const idx = Math.round(el.scrollLeft / el.clientWidth);
-    if (idx !== active) setActive(idx);
-  };
-
-  const goTo = (i: number) => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" });
-  };
+  const r = recs[active];
 
   return (
     <div className="w-full rounded-2xl border-2 border-border/70 bg-background/70 p-5 text-left backdrop-blur">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+      {/* 헤더 */}
+      <div className="flex items-center justify-between gap-2">
         <p className="text-base font-semibold uppercase tracking-[0.12em] text-primary/80">
           오늘 해볼 만한 것
         </p>
         {recs.length > 1 && (
-          <p className="text-sm font-medium text-foreground/55">좌우로 넘겨보세요</p>
+          <span className="text-sm font-medium tabular-nums text-foreground/45">
+            {active + 1} / {recs.length}
+          </span>
         )}
       </div>
 
-      <div
-        ref={scrollerRef}
-        onScroll={handleScroll}
-        className="mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        role="list"
-        aria-label="오늘 해볼 만한 것 목록"
-      >
-        {recs.map((r, i) => (
-          <div key={i} role="listitem" className="min-w-full snap-center">
-            <div className="flex flex-col gap-3 rounded-2xl border-2 border-border/60 bg-surface-elevated p-5">
-              <span
-                className={cn(
-                  "self-start rounded-full border px-3 py-1 text-sm font-bold",
-                  toneByPriority[r.priority] ?? toneByPriority.keep,
-                )}
-              >
-                {REC_PRIORITY_LABEL[r.priority]}
-              </span>
-              <p className="text-lg font-semibold leading-snug text-foreground sm:text-xl">
-                {r.text}
-              </p>
-              {r.hint && (
-                <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>
-              )}
-            </div>
-          </div>
-        ))}
+      {/* 카드 */}
+      <div className="mt-4 flex flex-col gap-3 rounded-2xl border-2 border-border/60 bg-surface-elevated p-5">
+        <span
+          className={cn(
+            "self-start rounded-full border px-3 py-1 text-sm font-bold",
+            toneByPriority[r.priority] ?? toneByPriority.keep,
+          )}
+        >
+          {REC_PRIORITY_LABEL[r.priority]}
+        </span>
+        <p className="text-lg font-semibold leading-snug text-foreground sm:text-xl">
+          {r.text}
+        </p>
+        {r.hint && (
+          <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>
+        )}
       </div>
 
+      {/* 이전 / 인디케이터 / 다음 */}
       {recs.length > 1 && (
-        <div className="mt-4 flex justify-center gap-2" role="tablist" aria-label="페이지 표시">
-          {recs.map((_, i) => (
-            <button
-              key={i}
-              type="button"
-              role="tab"
-              aria-selected={active === i}
-              aria-label={`${i + 1}번째 추천으로 이동`}
-              onClick={() => goTo(i)}
-              className={cn(
-                "h-2.5 rounded-full transition-all",
-                active === i ? "w-6 bg-primary" : "w-2.5 bg-foreground/25",
-              )}
-            />
-          ))}
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setActive((v) => Math.max(0, v - 1))}
+            disabled={active === 0}
+            aria-label="이전"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground/60 transition disabled:opacity-30 hover:bg-muted active:scale-95"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActive((v) => Math.min(recs.length - 1, v + 1))}
+            disabled={active === recs.length - 1}
+            aria-label="다음"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground/60 transition disabled:opacity-30 hover:bg-muted active:scale-95"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
         </div>
       )}
 

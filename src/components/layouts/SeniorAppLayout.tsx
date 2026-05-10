@@ -43,23 +43,20 @@ export function SeniorAppLayout({
   return (
     <div className="flex min-h-screen flex-col bg-warm-gradient pb-32">
       <header className="sticky top-0 z-40 border-b-2 border-border/70 bg-background/95 backdrop-blur-xl">
-        <div className="mx-auto flex h-20 w-full max-w-2xl items-center justify-between px-5">
-          <Logo size="sm" />
+        <div className="mx-auto flex h-16 w-full max-w-2xl items-center justify-between px-5">
+          <Logo size="md" />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex items-center gap-2 rounded-full border-2 border-border bg-background px-2 py-1.5 pr-4 text-fluid-base font-medium transition-colors hover:bg-surface"
+                className="flex items-center gap-1.5 rounded-full p-1 transition-colors hover:bg-muted"
                 aria-label="내 계정"
               >
-                <Avatar className="h-11 w-11">
-                  <AvatarFallback className="bg-primary text-fluid-base font-semibold text-primary-foreground">
+                <Avatar className="h-9 w-9">
+                  <AvatarFallback className="bg-primary text-sm font-semibold text-primary-foreground">
                     {initial}
                   </AvatarFallback>
                 </Avatar>
-                <span className="hidden max-w-[7rem] truncate sm:inline">
-                  {user?.nickname ?? "회원"}
-                </span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
