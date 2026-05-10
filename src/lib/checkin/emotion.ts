@@ -176,18 +176,35 @@ export const EMOTION_LIST = Object.values(EMOTIONS);
 
 export type RecPriority = "now" | "soon" | "keep";
 export type RecCadence = "daily" | "weekly" | "monthly";
+/**
+ * 권고 종류 — 어르신께 다양한 형태로 콘텐츠를 제안하기 위해 카테고리화.
+ * - action: 직접 해보는 행동 (기존 권고 형식)
+ * - book: 추천 도서
+ * - quote: 인용문·명언
+ * - meditation: 짧은 명상·호흡 가이드
+ * - place: 가볼 만한 장소 (서울/공원/공간 등)
+ * - music: 음악·재생목록
+ * - content: 영상·읽을거리 (다큐·기사)
+ */
+export type RecKind = "action" | "book" | "quote" | "meditation" | "place" | "music" | "content";
 
 export type EmotionRecommendation = {
   /** 우선순위: now=지금 바로, soon=오늘 안에, keep=평소처럼 유지 */
   priority: RecPriority;
   /** 권고 주기 — 일일/주간/월간. 미지정시 daily로 간주 */
   cadence?: RecCadence;
-  /** 시니어가 따라할 수 있는 한 줄 행동 권고 */
+  /** 권고 종류. 미지정시 action으로 간주 */
+  kind?: RecKind;
+  /** 시니어가 따라할 수 있는 한 줄 행동 권고 (또는 책 제목·명언 본문) */
   text: string;
-  /** 한 줄 보충 — 왜/어떻게 (선택) */
+  /** 한 줄 보충 — 왜/어떻게 / 책의 한 줄 소개 / 명언 의미 (선택) */
   hint?: string;
   /** 근거 — 논문/가이드라인 출처 요약 (선택) */
   evidence?: string;
+  /** 책의 저자, 명언의 화자, 장소의 위치 등 메타 (선택) */
+  author?: string;
+  /** 외부 참고 링크 (선택) */
+  link?: string;
 };
 
 export const REC_CADENCE_LABEL: Record<RecCadence, string> = {

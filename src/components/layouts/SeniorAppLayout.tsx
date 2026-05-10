@@ -20,6 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth/mock-auth";
 import { AskFab } from "@/components/ask/AskFab";
+import { SiteFooter } from "@/components/layouts/SiteFooter";
 
 const tabs = [
   { to: "/home", label: "홈", icon: Home },
@@ -97,6 +98,8 @@ export function SeniorAppLayout({
       <main className="mx-auto w-full max-w-2xl flex-1 px-5 pb-10 pt-6">
         {children}
       </main>
+
+      <SiteFooter />
 
       <AskFab />
 

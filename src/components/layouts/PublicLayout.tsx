@@ -1,7 +1,8 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Logo } from "@/components/brand/Logo";
 import { Button } from "@/components/ui/button";
-import { ArrowUpRight, MapPin, Mail, Phone, LogOut, User as UserIcon } from "lucide-react";
+import { ArrowUpRight, LogOut, User as UserIcon } from "lucide-react";
+import { SiteFooter } from "@/components/layouts/SiteFooter";
 import { useAuth } from "@/lib/auth/mock-auth";
 import {
   DropdownMenu,
@@ -102,60 +103,7 @@ export function PublicLayout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      <footer className="border-t border-border/40 bg-background/40">
-        <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6">
-          {/* Top: brand + nav */}
-          <div className="grid gap-10 md:grid-cols-[1.5fr_1fr]">
-            <div className="flex flex-col gap-3">
-              <Logo size="sm" />
-              <p className="max-w-sm text-sm text-muted-foreground">
-                가족이 함께 만드는 따뜻한 돌봄. 곁이 일상의 안부를 잇습니다.
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground/70">
-                고객 지원
-              </h3>
-              <a href="mailto:support@gyeot.kr" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
-                <Mail className="h-3.5 w-3.5" />
-                <span>support@gyeot.kr</span>
-              </a>
-              <a href="tel:1588-0000" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
-                <Phone className="h-3.5 w-3.5" />
-                <span>1588-0000</span>
-              </a>
-              <p className="text-xs text-muted-foreground">평일 09:00 – 18:00 (점심 12:00 – 13:00)</p>
-            </div>
-          </div>
-
-          {/* Divider */}
-          <div className="my-8 h-px bg-border/60" />
-
-          {/* Business info */}
-          <div className="space-y-3 text-xs leading-relaxed text-muted-foreground">
-            <p className="font-semibold text-foreground">㈜곁 (Gyeot Inc.)</p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
-              <span>대표 : 홍길동</span>
-              <span>사업자등록번호 : 000-00-00000</span>
-              <span>통신판매업신고 : 제 0000-서울강남-00000호</span>
-              <span>개인정보보호책임자 : 김보호</span>
-            </div>
-            <div className="flex items-start gap-2">
-              <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>서울특별시 강남구 테헤란로 123, 10층 (06234)</span>
-            </div>
-            <div className="flex flex-col gap-1 pt-2 sm:flex-row sm:items-center sm:justify-between">
-              <span>© {new Date().getFullYear()} Gyeot Inc. All rights reserved.</span>
-              <div className="flex flex-wrap gap-x-4 gap-y-1">
-                <Link to="/" className="hover:text-foreground">이용약관</Link>
-                <Link to="/" className="hover:text-foreground font-medium text-foreground/80">개인정보처리방침</Link>
-                <a href="https://www.ftc.go.kr/bizCommPop.do?wrkr_no=0000000000" target="_blank" rel="noreferrer" className="hover:text-foreground">사업자정보확인</a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

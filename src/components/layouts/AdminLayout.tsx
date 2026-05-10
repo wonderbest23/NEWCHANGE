@@ -1,7 +1,8 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, BarChart3, Building2, Mic, Store, AlertTriangle, Lightbulb, MessageSquare } from "lucide-react";
+import { LayoutDashboard, BarChart3, Building2, Mic, Store, AlertTriangle, Lightbulb, MessageSquare, Settings2 } from "lucide-react";
+import { SiteFooter } from "@/components/layouts/SiteFooter";
 
 const nav = [
   { to: "/admin", label: "개요", icon: LayoutDashboard },
@@ -12,6 +13,7 @@ const nav = [
   { to: "/admin/organization-pipeline", label: "기관 파이프라인", icon: Building2 },
   { to: "/admin/agencies", label: "대행업체 관리", icon: Store },
   { to: "/admin/voice-test", label: "음성 시뮬레이션", icon: Mic },
+  { to: "/admin/site-config", label: "사이트 설정", icon: Settings2 },
 ] as const;
 
 export function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -46,7 +48,10 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
       </aside>
-      <main className="flex-1 px-6 py-8 md:px-10 md:py-10">{children}</main>
+      <div className="flex flex-1 flex-col">
+        <main className="flex-1 px-6 py-8 md:px-10 md:py-10">{children}</main>
+        <SiteFooter />
+      </div>
     </div>
   );
 }

@@ -43,6 +43,7 @@ import { Route as GuardianAlertsRouteImport } from './routes/guardian.alerts'
 import { Route as CommunityWriteRouteImport } from './routes/community.write'
 import { Route as AdminVoiceTestRouteImport } from './routes/admin.voice-test'
 import { Route as AdminTipsRouteImport } from './routes/admin.tips'
+import { Route as AdminSiteConfigRouteImport } from './routes/admin.site-config'
 import { Route as AdminOrganizationPipelineRouteImport } from './routes/admin.organization-pipeline'
 import { Route as AdminInvestorKpiRouteImport } from './routes/admin.investor-kpi'
 import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
@@ -241,6 +242,11 @@ const AdminTipsRoute = AdminTipsRouteImport.update({
   path: '/tips',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminSiteConfigRoute = AdminSiteConfigRouteImport.update({
+  id: '/site-config',
+  path: '/site-config',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminOrganizationPipelineRoute =
   AdminOrganizationPipelineRouteImport.update({
     id: '/organization-pipeline',
@@ -402,6 +408,7 @@ export interface FileRoutesByFullPath {
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
   '/admin/organization-pipeline': typeof AdminOrganizationPipelineRoute
+  '/admin/site-config': typeof AdminSiteConfigRoute
   '/admin/tips': typeof AdminTipsRouteWithChildren
   '/admin/voice-test': typeof AdminVoiceTestRoute
   '/community/write': typeof CommunityWriteRoute
@@ -463,6 +470,7 @@ export interface FileRoutesByTo {
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
   '/admin/organization-pipeline': typeof AdminOrganizationPipelineRoute
+  '/admin/site-config': typeof AdminSiteConfigRoute
   '/admin/tips': typeof AdminTipsRouteWithChildren
   '/admin/voice-test': typeof AdminVoiceTestRoute
   '/community/write': typeof CommunityWriteRoute
@@ -527,6 +535,7 @@ export interface FileRoutesById {
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
   '/admin/organization-pipeline': typeof AdminOrganizationPipelineRoute
+  '/admin/site-config': typeof AdminSiteConfigRoute
   '/admin/tips': typeof AdminTipsRouteWithChildren
   '/admin/voice-test': typeof AdminVoiceTestRoute
   '/community/write': typeof CommunityWriteRoute
@@ -592,6 +601,7 @@ export interface FileRouteTypes {
     | '/admin/ingest'
     | '/admin/investor-kpi'
     | '/admin/organization-pipeline'
+    | '/admin/site-config'
     | '/admin/tips'
     | '/admin/voice-test'
     | '/community/write'
@@ -653,6 +663,7 @@ export interface FileRouteTypes {
     | '/admin/ingest'
     | '/admin/investor-kpi'
     | '/admin/organization-pipeline'
+    | '/admin/site-config'
     | '/admin/tips'
     | '/admin/voice-test'
     | '/community/write'
@@ -716,6 +727,7 @@ export interface FileRouteTypes {
     | '/admin/ingest'
     | '/admin/investor-kpi'
     | '/admin/organization-pipeline'
+    | '/admin/site-config'
     | '/admin/tips'
     | '/admin/voice-test'
     | '/community/write'
@@ -1050,6 +1062,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminTipsRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/site-config': {
+      id: '/admin/site-config'
+      path: '/site-config'
+      fullPath: '/admin/site-config'
+      preLoaderRoute: typeof AdminSiteConfigRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/organization-pipeline': {
       id: '/admin/organization-pipeline'
       path: '/organization-pipeline'
@@ -1261,6 +1280,7 @@ interface AdminRouteChildren {
   AdminIngestRoute: typeof AdminIngestRoute
   AdminInvestorKpiRoute: typeof AdminInvestorKpiRoute
   AdminOrganizationPipelineRoute: typeof AdminOrganizationPipelineRoute
+  AdminSiteConfigRoute: typeof AdminSiteConfigRoute
   AdminTipsRoute: typeof AdminTipsRouteWithChildren
   AdminVoiceTestRoute: typeof AdminVoiceTestRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -1273,6 +1293,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminIngestRoute: AdminIngestRoute,
   AdminInvestorKpiRoute: AdminInvestorKpiRoute,
   AdminOrganizationPipelineRoute: AdminOrganizationPipelineRoute,
+  AdminSiteConfigRoute: AdminSiteConfigRoute,
   AdminTipsRoute: AdminTipsRouteWithChildren,
   AdminVoiceTestRoute: AdminVoiceTestRoute,
   AdminIndexRoute: AdminIndexRoute,
