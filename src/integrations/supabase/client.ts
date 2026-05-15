@@ -2,11 +2,36 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
+/**
+ * Cloudflare Pages / Workers 배포 환경에서는 .env.production이 빌드에 자동 로드되지
+ * 않을 수 있어 `import.meta.env.VITE_*`가 비어 있는 경우가 있습니다.
+ * Supabase anon key 와 URL 은 원래 공개되어도 안전한 값(RLS 가 모든 접근을 통제)
+ * 이므로, 모든 환경에서 동작을 보장하기 위해 fallback 으로 하드코딩합니다.
+ *
+ * 새 프로젝트로 옮기실 때는 이 두 값만 갱신하시면 됩니다.
+ */
+const FALLBACK_SUPABASE_URL = 'https://nurpesdatxgspsifsllu.supabase.co';
+const FALLBACK_SUPABASE_PUBLISHABLE_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNzc3NDcsImV4cCI6MjA5Mjk1Mzc0N30.KKuLo8WiXhFmCSf7fDkFwX_8ecvrAOunTm1YkaHdBQ0';
+
+function readEnv(name: string): string | undefined {
+  // 1) Vite 빌드 시점 인라인 (import.meta.env.VITE_*)
+  const viteVal = (import.meta as any)?.env?.[`VITE_${name}`];
+  if (viteVal) return String(viteVal);
+  // 2) Node / Workers nodejs_compat 런타임 (process.env.*)
+  if (typeof process !== 'undefined' && process?.env) {
+    const v = process.env[name] ?? process.env[`VITE_${name}`];
+    if (v) return v;
+  }
+  // 3) Cloudflare Workers env binding (globalThis 일부 환경)
+  const gEnv = (globalThis as any)?.env;
+  if (gEnv && (gEnv[name] || gEnv[`VITE_${name}`])) return gEnv[name] ?? gEnv[`VITE_${name}`];
+  return undefined;
+}
+
 function createSupabaseClient() {
-  // Use import.meta.env for client-side (Vite build-time replacement)
-  // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+  const SUPABASE_URL = readEnv('SUPABASE_URL') ?? FALLBACK_SUPABASE_URL;
+  const SUPABASE_PUBLISHABLE_KEY = readEnv('SUPABASE_PUBLISHABLE_KEY') ?? FALLBACK_SUPABASE_PUBLISHABLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [

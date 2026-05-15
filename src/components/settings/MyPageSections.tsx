@@ -53,7 +53,12 @@ const DEFAULT_NOTIF: NotifSettings = {
   shareToGuardian: true,
 };
 
-export function MyPageSections() {
+/**
+ * @param showOnly  "all"=모든 섹션 / "profile"=내 정보(프로필 편집)만
+ *                  /home/me 가 핵심 5개 시각 카드 + 알림 압축으로 재설계되어
+ *                  편집 모달로 진입할 때 프로필 편집만 노출하도록 추가됨.
+ */
+export function MyPageSections({ showOnly = "all" }: { showOnly?: "all" | "profile" } = {}) {
   const { user } = useAuth();
 
   const [nickname, setNickname] = useState(user?.nickname ?? "");
@@ -339,6 +344,7 @@ export function MyPageSections() {
       </section>
 
       {/* ── 알림 설정 ── */}
+      {showOnly === "all" && (
       <section className={`mt-6 ${compactSectionClass}`}>
         <div className="flex items-center gap-2">
           <Bell className="h-5 w-5 text-primary" />
@@ -384,15 +390,9 @@ export function MyPageSections() {
           </div>
         </div>
       </section>
+      )}
 
-      {/* ── 구매내역 ── */}
-      <section className={`mt-6 ${compactSectionClass}`}>
-        <div className="flex items-center gap-2">
-          <Receipt className="h-5 w-5 text-primary" />
-          <h2 className="font-display text-xl text-foreground">구매내역</h2>
-        </div>
-        <p className="mt-3 text-base text-foreground/70">아직 구매내역이 없습니다.</p>
-      </section>
+      {/* 구매내역 섹션은 /home/me 재설계 시 제거됨 (사용자 요청) */}
     </>
   );
 }

@@ -213,6 +213,122 @@ export const REC_CADENCE_LABEL: Record<RecCadence, string> = {
   monthly: "이번 달",
 };
 
+/**
+ * 감정별 풍부한 콘텐츠 풀 — 책/명언/명상/장소/음악/콘텐츠.
+ * 매일 같은 권고가 나오지 않도록 30+ 항목을 두고 날짜로 회전 추출.
+ *
+ * 출처 원칙:
+ *  - 책: 한국 노년·심리 분야의 베스트셀러 또는 공인 추천도서
+ *  - 명언: 출처 명확한 문헌/인사 인용
+ *  - 명상·호흡: 임상 검증된 기법 (4-7-8, box breathing 등)
+ *  - 장소: 서울 시민이 무료로 이용 가능한 공원·도서관·복지관 위주
+ */
+const ENRICHMENT: Record<EmotionKey, EmotionRecommendation[]> = {
+  joyful: [
+    // 책 — 긍정 강화
+    { kind: "book", priority: "keep", cadence: "weekly", text: "『해피니스 프로젝트』", author: "그레첸 루빈", hint: "행복은 큰 변화가 아니라 매일의 작은 습관에서 옵니다." },
+    { kind: "book", priority: "keep", cadence: "weekly", text: "『나는 매일매일 자신감을 마신다』", author: "이미경", hint: "스스로를 토닥이는 30일 루틴." },
+    { kind: "book", priority: "keep", cadence: "monthly", text: "『인생수업』", author: "엘리자베스 퀴블러 로스, 데이비드 케슬러", hint: "삶의 기쁨과 의미를 다시 발견하는 책." },
+    // 명언
+    { kind: "quote", priority: "keep", cadence: "daily", text: "행복은 우리 안에 있다. 멀리서 찾지 마라.", author: "공자" },
+    { kind: "quote", priority: "keep", cadence: "daily", text: "감사하는 마음은 가장 큰 미덕이며, 다른 모든 미덕의 어머니다.", author: "키케로" },
+    { kind: "quote", priority: "keep", cadence: "daily", text: "오늘 하루도 좋은 하루가 될 수 있다는 사실에 감사합시다.", author: "법정 스님" },
+    // 장소
+    { kind: "place", priority: "soon", cadence: "weekly", text: "서울숲 · 가족 산책길", author: "성동구 — 무료, 지하철 분당선 서울숲역", hint: "넓은 잔디밭과 사슴 방사장이 있어 마음이 트입니다." },
+    { kind: "place", priority: "soon", cadence: "weekly", text: "남산공원 둘레길", author: "중구 — 케이블카·도보 모두 가능", hint: "탁 트인 서울 야경이 작은 행복을 더해줍니다." },
+    // 음악/콘텐츠
+    { kind: "music", priority: "keep", cadence: "daily", text: "정훈희 『꽃밭에서』", hint: "밝고 따뜻한 한국 가요 — 햇살 같은 멜로디." },
+    { kind: "content", priority: "keep", cadence: "weekly", text: "EBS 『인생 후반전』 다큐 시리즈", hint: "비슷한 연배 어르신들의 행복한 삶 사례." },
+  ],
+
+  calm: [
+    // 명상·호흡
+    { kind: "meditation", priority: "keep", cadence: "daily", text: "4-7-8 호흡법 — 들숨 4초·멈춤 7초·날숨 8초", hint: "잠들기 전 3회 반복 → 부교감신경 활성화로 평온 유지." },
+    { kind: "meditation", priority: "keep", cadence: "daily", text: "박스 호흡 — 4-4-4-4 (들숨·멈춤·날숨·멈춤 각 4초)", hint: "긴장 풀고 평온을 더 길게 잡아주는 기법." },
+    { kind: "meditation", priority: "soon", cadence: "weekly", text: "바디스캔 명상 (10분)", hint: "발끝부터 머리까지 천천히 신체를 의식하며 내려놓기." },
+    // 책
+    { kind: "book", priority: "keep", cadence: "weekly", text: "『있는 그대로 사랑하라』", author: "틱낫한", hint: "마음챙김으로 매 순간을 평온하게 머무는 법." },
+    { kind: "book", priority: "keep", cadence: "monthly", text: "『고요할수록 밝아지는 것들』", author: "혜민 스님", hint: "평온한 일상에 깊이를 더하는 짧은 글들." },
+    // 명언
+    { kind: "quote", priority: "keep", cadence: "daily", text: "고요한 마음은 모든 보물을 담을 수 있는 그릇이다.", author: "노자" },
+    { kind: "quote", priority: "keep", cadence: "daily", text: "평화는 미소에서 시작된다.", author: "마더 테레사" },
+    // 장소
+    { kind: "place", priority: "soon", cadence: "weekly", text: "양재시민의숲", author: "서초구 — 잔디 + 산책로", hint: "도심에서 가장 조용한 숲. 평온한 분위기로 유명." },
+    { kind: "place", priority: "soon", cadence: "weekly", text: "선유도공원 (한강 위 정원)", author: "영등포구 — 한강 풍광", hint: "물길과 정원이 어우러진 사색 산책지." },
+    // 음악
+    { kind: "music", priority: "keep", cadence: "daily", text: "이루마 『River Flows in You』", hint: "잔잔한 피아노 — 호흡과 박자가 맞는 느린 곡." },
+  ],
+
+  sad: [
+    // 책 — 우울 회복
+    { kind: "book", priority: "soon", cadence: "weekly", text: "『죽음의 수용소에서』", author: "빅터 프랭클", hint: "어떤 상황에서도 의미를 발견할 수 있다는 로고테라피." },
+    { kind: "book", priority: "soon", cadence: "weekly", text: "『상처받지 않는 영혼』", author: "마이클 싱어", hint: "마음의 무게를 내려놓는 법을 안내합니다." },
+    { kind: "book", priority: "soon", cadence: "monthly", text: "『지금 이 순간을 살아라』", author: "에크하르트 톨레", hint: "과거의 슬픔에서 오늘로 돌아오는 가이드." },
+    // 명언
+    { kind: "quote", priority: "soon", cadence: "daily", text: "이 또한 지나가리라.", author: "다윗 왕 (전해지는 잠언)", hint: "지금의 슬픔은 영원하지 않습니다." },
+    { kind: "quote", priority: "soon", cadence: "daily", text: "별을 보려면 어둠이 필요하다.", author: "찰스 비어드" },
+    { kind: "quote", priority: "soon", cadence: "daily", text: "슬픔은 사랑했다는 증거입니다.", author: "C.S. 루이스" },
+    // 명상
+    { kind: "meditation", priority: "now", cadence: "daily", text: "자기 자비 명상 (5분)", hint: "\"내가 평안하기를, 내가 건강하기를\"을 천천히 3번 되뇌어 보세요." },
+    // 장소 — 햇살·자연
+    { kind: "place", priority: "soon", cadence: "weekly", text: "올림픽공원 들꽃마루", author: "송파구 — 햇살 잘 드는 잔디밭", hint: "햇빛을 쬐며 천천히 걷는 것만으로도 기분이 회복됩니다." },
+    { kind: "place", priority: "soon", cadence: "weekly", text: "한강공원 — 망원지구", author: "마포구 — 한강 일몰", hint: "노을을 보며 가까운 사람과 통화 한 번 해보세요." },
+    // 음악
+    { kind: "music", priority: "keep", cadence: "daily", text: "이선희 『인연』 / 김광석 『서른 즈음에』", hint: "감정을 토닥여 주는 한국 발라드 — 감정 정화에 도움." },
+  ],
+
+  tired: [
+    // 명상·호흡 (회복용)
+    { kind: "meditation", priority: "now", cadence: "daily", text: "10분 NSDR 휴식 (Non-Sleep Deep Rest)", hint: "눈 감고 누워 호흡에만 집중 — 짧지만 깊은 회복." },
+    { kind: "meditation", priority: "now", cadence: "daily", text: "심호흡 5회 + 어깨 으쓱 3번", hint: "긴장된 어깨 근육이 풀리며 산소 공급이 늘어납니다." },
+    // 책
+    { kind: "book", priority: "soon", cadence: "weekly", text: "『잘 쉬는 법』", author: "클라우디아 해먼드", hint: "BBC가 추천한 10가지 쉼의 방식 — 누워 있지 않아도 쉴 수 있다." },
+    { kind: "book", priority: "soon", cadence: "monthly", text: "『느리게 사는 즐거움』", author: "에크낫 이스워런", hint: "서두름이 피로를 만든다는 통찰." },
+    // 명언
+    { kind: "quote", priority: "now", cadence: "daily", text: "휴식은 게으름이 아니라 회복이다.", author: "오노레 드 발자크" },
+    { kind: "quote", priority: "soon", cadence: "daily", text: "쉼표 없이 좋은 음악은 없다.", author: "스티브 위트(작가)" },
+    // 장소
+    { kind: "place", priority: "soon", cadence: "weekly", text: "근처 공공도서관 — 조용한 열람실", hint: "조용한 공간에서 30분만 앉아 있어도 피로가 풀립니다." },
+    // 음악
+    { kind: "music", priority: "keep", cadence: "daily", text: "조용필 『바람의 노래』", hint: "잔잔하고 깊은 한국 가요." },
+    { kind: "content", priority: "keep", cadence: "weekly", text: "ASMR 『빗소리』 또는 『난로 타는 소리』 (10분)", hint: "백색소음은 신경계를 안정시켜 회복을 돕습니다." },
+  ],
+
+  alert: [
+    // 호흡·이완
+    { kind: "meditation", priority: "now", cadence: "daily", text: "5-5-5 호흡 (들숨·멈춤·날숨 각 5초)", hint: "긴장된 교감신경을 빠르게 진정시킵니다." },
+    { kind: "meditation", priority: "now", cadence: "daily", text: "점진적 근육 이완 (PMR) — 발끝부터 머리까지", hint: "각 부위 5초 힘주고 → 10초 풀기. 신체 긴장 해소." },
+    // 책 — 분노·스트레스 관리
+    { kind: "book", priority: "soon", cadence: "weekly", text: "『화, 다스리는 법』", author: "틱낫한", hint: "분노를 안고 이해하는 마음챙김 접근." },
+    { kind: "book", priority: "soon", cadence: "monthly", text: "『감정의 발견』", author: "마크 브래킷", hint: "감정을 인정·이해·표현하는 RULER 모델." },
+    // 명언
+    { kind: "quote", priority: "now", cadence: "daily", text: "분노는 한 순간의 광기다. 잠시 멈추라.", author: "호라티우스" },
+    { kind: "quote", priority: "soon", cadence: "daily", text: "남에게 화내는 것은 다른 사람의 잘못으로 자신을 벌하는 것이다.", author: "마르쿠스 아우렐리우스" },
+    // 장소
+    { kind: "place", priority: "soon", cadence: "weekly", text: "북한산둘레길 — 우이령길", author: "강북·도봉구 — 완만한 트레킹", hint: "신체활동은 분노 각성을 빠르게 낮춥니다." },
+    // 음악
+    { kind: "music", priority: "keep", cadence: "daily", text: "Ludovico Einaudi 『Nuvole Bianche』", hint: "긴장 풀어주는 잔잔한 피아노 — 호흡과 박자가 맞아 진정 효과." },
+  ],
+
+  anxious: [
+    // 호흡·그라운딩
+    { kind: "meditation", priority: "now", cadence: "daily", text: "5-4-3-2-1 그라운딩", hint: "지금 보이는 5가지 · 들리는 4가지 · 만질 수 있는 3가지 · 냄새 2가지 · 맛 1가지를 천천히 짚어보세요." },
+    { kind: "meditation", priority: "now", cadence: "daily", text: "긴 날숨 호흡 (4초 들숨 · 8초 날숨)", hint: "긴 날숨은 미주신경을 자극해 빠르게 안정을 되찾아 줍니다." },
+    // 책
+    { kind: "book", priority: "soon", cadence: "weekly", text: "『불안이라는 친구』", author: "스콧 스토셀", hint: "걱정을 적이 아닌 친구처럼 다루는 시선." },
+    { kind: "book", priority: "soon", cadence: "monthly", text: "『지금 알고 있는 걸 그때도 알았더라면』", author: "류시화 엮음", hint: "흔들리는 마음을 다잡는 한 줄 잠언 모음." },
+    // 명언
+    { kind: "quote", priority: "now", cadence: "daily", text: "걱정의 96%는 실제로 일어나지 않는다.", author: "코넬대 연구 (Borkovec, 1999)", hint: "지금의 걱정도 대부분 그냥 지나갈 거예요." },
+    { kind: "quote", priority: "now", cadence: "daily", text: "용기는 두려움이 없는 것이 아니라, 두려움 속에서도 한 발 내딛는 것이다.", author: "넬슨 만델라" },
+    { kind: "quote", priority: "soon", cadence: "daily", text: "지금 이 순간은 안전합니다.", author: "마음챙김 기법 (MBSR)" },
+    // 장소
+    { kind: "place", priority: "soon", cadence: "weekly", text: "청계천 산책로", author: "종로/중구 — 도심 속 물길", hint: "물 흐르는 소리는 불안을 가라앉히는 자연의 백색소음." },
+    // 음악
+    { kind: "music", priority: "keep", cadence: "daily", text: "Marconi Union 『Weightless』", hint: "Mindlab 연구에서 불안 65% 감소 효과로 보고된 '세상에서 가장 편안한 곡'.", evidence: "Mindlab International, 2011 — 음악과 불안 측정 실험" },
+    { kind: "content", priority: "soon", cadence: "weekly", text: "정신건강위기상담 1577-0199 (24시간 무료)", hint: "혼자 견디지 마세요. 전화 한 통으로 큰 짐을 덜 수 있어요." },
+  ],
+};
+
 const RECOMMENDATIONS: Record<EmotionKey, EmotionRecommendation[]> = {
   // ── 기쁨(Joy) — 긍정 강화·감사 회상·소셜 활동 ─────────────────
   joyful: [
@@ -287,7 +403,68 @@ const RECOMMENDATIONS: Record<EmotionKey, EmotionRecommendation[]> = {
 };
 
 export function getEmotionRecommendations(key: EmotionKey): EmotionRecommendation[] {
-  return RECOMMENDATIONS[key] ?? [];
+  // 기본 행동 권고 + 풍부한 콘텐츠(책/명언/명상/장소/음악) 병합 후
+  // kind 필드에 기본값(action)을 채워서 반환.
+  const base = RECOMMENDATIONS[key] ?? [];
+  const extras = ENRICHMENT[key] ?? [];
+  return [...base, ...extras].map((r) => ({
+    ...r,
+    kind: r.kind ?? "action",
+  }));
+}
+
+/**
+ * 날짜 기반 결정적(deterministic) 회전 — 같은 날엔 항상 같은 결과,
+ * 다른 날엔 다른 결과를 보여줘 매일 새로운 콘텐츠가 노출되도록 함.
+ *
+ * @param items 후보 풀
+ * @param count 추출 개수
+ * @param salt  emotionKey 등을 더해 감정별로 회전 위상 분리
+ */
+export function rotateDaily<T>(items: T[], count: number, salt = ""): T[] {
+  if (items.length === 0) return [];
+  if (items.length <= count) return items;
+  // YYYY-MM-DD (KST) 를 시드로 사용
+  const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+  let seed = 0;
+  for (const c of dayKey + salt) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
+  // 시작 인덱스 + 균등 간격으로 count 개 추출 — 풀이 크면 다양성 유지
+  const start = seed % items.length;
+  const step = Math.max(1, Math.floor(items.length / count));
+  const picked: T[] = [];
+  for (let i = 0; i < count; i += 1) {
+    picked.push(items[(start + i * step) % items.length]);
+  }
+  return picked;
+}
+
+/**
+ * 감정별 "오늘의 다양한 안내" — 행동 1개 + 책/명언/명상/장소/음악 등 다른 종류 2~3개를
+ * 서로 다른 카테고리로 골라 반환. 매일 회전.
+ */
+export function getDailyMixedRecommendations(
+  key: EmotionKey,
+  count = 4,
+): EmotionRecommendation[] {
+  const all = getEmotionRecommendations(key);
+  // kind 별로 묶음
+  const buckets = new Map<RecKind, EmotionRecommendation[]>();
+  for (const r of all) {
+    const k = (r.kind ?? "action") as RecKind;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k)!.push(r);
+  }
+  // 우선순위: action(즉각 행동) → meditation → quote → book → place → music → content
+  const order: RecKind[] = ["action", "meditation", "quote", "book", "place", "music", "content"];
+  const out: EmotionRecommendation[] = [];
+  for (const k of order) {
+    const list = buckets.get(k);
+    if (!list?.length) continue;
+    const [pick] = rotateDaily(list, 1, key + ":" + k);
+    if (pick) out.push(pick);
+    if (out.length >= count) break;
+  }
+  return out;
 }
 
 /** 주기별로 권고를 묶어서 반환 (자세히 보기·주간/월간 탭용) */

@@ -11,11 +11,14 @@ import { trackEvent } from "@/lib/analytics/trackEvent";
 import { ANALYTICS_EVENTS } from "@/lib/analytics/eventNames";
 import {
   resolveEmotion,
-  getEmotionRecommendations,
+  getDailyMixedRecommendations,
   REC_PRIORITY_LABEL,
   resolveAlert,
   ALERT_LEVEL_LABEL,
+  type EmotionRecommendation,
 } from "@/lib/checkin/emotion";
+import { getDailyEmotionRecommendations } from "@/lib/checkin/emotion-rec-actions";
+import { BookOpen, Quote, Wind, MapPin as MapPinIcon, Music, Newspaper, Sparkles as SparklesIcon } from "lucide-react";
 
 type Transcript = { role: "user" | "ai"; text: string; ts: number; partial?: boolean };
 type Status = "idle" | "connecting" | "live" | "ended" | "analyzing";
@@ -884,9 +887,50 @@ function NextCallNotice() {
 
 
 // ───────────────────────── 감정 기반 권고 카루셀 ─────────────────────────
+const KIND_META: Record<
+  string,
+  { label: string; icon: typeof BookOpen; tone: string; tag: string }
+> = {
+  action: { label: "오늘 해볼 것", icon: SparklesIcon, tone: "from-rose-soft via-background to-amber-soft", tag: "bg-primary/10 text-primary" },
+  meditation: { label: "호흡·명상", icon: Wind, tone: "from-sky-50 via-background to-teal-50", tag: "bg-teal-100 text-teal-700" },
+  quote: { label: "오늘의 한마디", icon: Quote, tone: "from-amber-soft via-background to-rose-soft", tag: "bg-amber-warm/15 text-amber-warm" },
+  book: { label: "추천 도서", icon: BookOpen, tone: "from-orange-50 via-background to-amber-50", tag: "bg-orange-100 text-orange-700" },
+  place: { label: "가볼 만한 곳", icon: MapPinIcon, tone: "from-sage-soft via-background to-emerald-50", tag: "bg-sage/15 text-sage" },
+  music: { label: "음악 추천", icon: Music, tone: "from-violet-50 via-background to-rose-soft", tag: "bg-violet-100 text-violet-700" },
+  content: { label: "도움되는 정보", icon: Newspaper, tone: "from-slate-50 via-background to-sky-50", tag: "bg-slate-100 text-slate-700" },
+};
+
 function EmotionRecsCarousel({ emotionKey }: { emotionKey: string }) {
-  const recs = getEmotionRecommendations(emotionKey as any).slice(0, 3);
+  // 1) 정적 풀로 즉시 표시 (LCP 최적화)
+  // 2) 백그라운드에서 OpenAI 기반 일별 큐레이션을 받아오면 교체
+  const [recs, setRecs] = useState<EmotionRecommendation[]>(() =>
+    getDailyMixedRecommendations(emotionKey as any, 4),
+  );
   const [active, setActive] = useState(0);
+  const [source, setSource] = useState<"cache" | "ai" | "fallback" | "static">("static");
+
+  useEffect(() => {
+    let cancelled = false;
+    setActive(0);
+    setRecs(getDailyMixedRecommendations(emotionKey as any, 4));
+    setSource("static");
+    (async () => {
+      try {
+        const res = await getDailyEmotionRecommendations({
+          data: { emotionKey: emotionKey as any },
+        });
+        if (cancelled) return;
+        if (res?.items?.length) {
+          setRecs(res.items);
+          setSource(res.source);
+        }
+      } catch (e) {
+        // 무시 — 정적 풀 그대로 사용
+        console.warn("[emotion-rec] fetch failed", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [emotionKey]);
 
   if (recs.length === 0) return null;
 
@@ -897,13 +941,16 @@ function EmotionRecsCarousel({ emotionKey }: { emotionKey: string }) {
   };
 
   const r = recs[active];
+  const kind = (r.kind ?? "action") as keyof typeof KIND_META;
+  const km = KIND_META[kind] ?? KIND_META.action;
+  const KindIcon = km.icon;
 
   return (
     <div className="w-full rounded-2xl border-2 border-border/70 bg-background/70 p-5 text-left backdrop-blur">
       {/* 헤더 */}
       <div className="flex items-center justify-between gap-2">
         <p className="text-base font-semibold uppercase tracking-[0.12em] text-primary/80">
-          오늘 해볼 만한 것
+          오늘의 맞춤 안내
         </p>
         {recs.length > 1 && (
           <span className="text-sm font-medium tabular-nums text-foreground/45">
@@ -912,21 +959,53 @@ function EmotionRecsCarousel({ emotionKey }: { emotionKey: string }) {
         )}
       </div>
 
-      {/* 카드 */}
-      <div className="mt-4 flex flex-col gap-3 rounded-2xl border-2 border-border/60 bg-surface-elevated p-5">
-        <span
-          className={cn(
-            "self-start rounded-full border px-3 py-1 text-sm font-bold",
+      {/* 카드 — 종류별 다른 비주얼 */}
+      <div className={cn(
+        "mt-4 flex flex-col gap-3 rounded-2xl border-2 border-border/60 bg-gradient-to-br p-5",
+        km.tone,
+      )}>
+        {/* 종류 + 우선순위 배지 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={cn(
+            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold",
+            km.tag,
+          )}>
+            <KindIcon className="h-3.5 w-3.5" />
+            {km.label}
+          </span>
+          <span className={cn(
+            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold",
             toneByPriority[r.priority] ?? toneByPriority.keep,
-          )}
-        >
-          {REC_PRIORITY_LABEL[r.priority]}
-        </span>
-        <p className="text-lg font-semibold leading-snug text-foreground sm:text-xl">
-          {r.text}
-        </p>
-        {r.hint && (
-          <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>
+          )}>
+            {REC_PRIORITY_LABEL[r.priority]}
+          </span>
+        </div>
+
+        {/* 본문 — 종류별 다른 레이아웃 */}
+        {kind === "quote" ? (
+          <RecQuoteBody r={r} />
+        ) : kind === "book" ? (
+          <RecBookBody r={r} />
+        ) : kind === "place" ? (
+          <RecPlaceBody r={r} />
+        ) : kind === "music" ? (
+          <RecMusicBody r={r} />
+        ) : kind === "meditation" ? (
+          <RecMeditationBody r={r} />
+        ) : (
+          <RecActionBody r={r} />
+        )}
+
+        {/* 외부 링크 */}
+        {r.link && (
+          <a
+            href={r.link}
+            target="_blank"
+            rel="noreferrer"
+            className="self-start text-sm font-semibold text-primary underline underline-offset-4 hover:text-primary/80"
+          >
+            자세히 보기 ↗
+          </a>
         )}
       </div>
 
@@ -943,6 +1022,22 @@ function EmotionRecsCarousel({ emotionKey }: { emotionKey: string }) {
             <ChevronLeft className="h-5 w-5" />
           </button>
 
+          {/* 인디케이터 도트 */}
+          <div className="flex items-center gap-1.5">
+            {recs.map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                aria-label={`${i + 1}번째 안내로 이동`}
+                onClick={() => setActive(i)}
+                className={cn(
+                  "h-2 rounded-full transition-all",
+                  i === active ? "w-6 bg-primary" : "w-2 bg-foreground/25",
+                )}
+              />
+            ))}
+          </div>
+
           <button
             type="button"
             onClick={() => setActive((v) => Math.min(recs.length - 1, v + 1))}
@@ -955,9 +1050,104 @@ function EmotionRecsCarousel({ emotionKey }: { emotionKey: string }) {
         </div>
       )}
 
-      <p className="mt-4 text-sm leading-relaxed text-foreground/55 text-center">
-        ※ 의료 진단이 아니에요. 증상이 계속되면 보호자나 의료기관과 상담해주세요.
+      <p className="mt-4 text-xs leading-relaxed text-foreground/55 text-center">
+        ※ {source === "ai" || source === "cache"
+          ? "AI가 매일 새로 큐레이션해 드려요"
+          : "매일 새로운 안내로 바뀝니다"} · 의료 진단이 아니에요
       </p>
     </div>
+  );
+}
+
+/* ── 종류별 카드 본문 ───────────────────────────────────── */
+function RecActionBody({ r }: { r: EmotionRecommendation }) {
+  return (
+    <>
+      <p className="text-lg font-semibold leading-snug text-foreground sm:text-xl">{r.text}</p>
+      {r.hint && <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>}
+    </>
+  );
+}
+
+function RecMeditationBody({ r }: { r: EmotionRecommendation }) {
+  return (
+    <>
+      <p className="text-lg font-semibold leading-snug text-foreground sm:text-xl">{r.text}</p>
+      {r.hint && (
+        <p className="rounded-xl bg-background/60 p-3 text-base leading-relaxed text-foreground/75 backdrop-blur-sm">
+          🌬️ {r.hint}
+        </p>
+      )}
+    </>
+  );
+}
+
+function RecQuoteBody({ r }: { r: EmotionRecommendation }) {
+  return (
+    <>
+      <blockquote className="relative pl-6">
+        <span className="absolute left-0 top-0 select-none font-display text-4xl leading-none text-amber-warm/50">"</span>
+        <p className="font-display text-lg italic leading-relaxed text-foreground sm:text-xl">{r.text}</p>
+      </blockquote>
+      {r.author && (
+        <p className="text-sm font-medium text-foreground/55">— {r.author}</p>
+      )}
+      {r.hint && (
+        <p className="text-sm leading-relaxed text-foreground/60">{r.hint}</p>
+      )}
+    </>
+  );
+}
+
+function RecBookBody({ r }: { r: EmotionRecommendation }) {
+  return (
+    <div className="flex items-start gap-4">
+      {/* 책 아이콘 (이미지 대용) */}
+      <div className="flex h-20 w-14 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-orange-200 to-amber-300 shadow-md">
+        <BookOpen className="h-7 w-7 text-amber-800" />
+      </div>
+      <div className="min-w-0 flex-1 space-y-1">
+        <p className="text-lg font-bold leading-snug text-foreground">{r.text}</p>
+        {r.author && (
+          <p className="text-sm font-medium text-foreground/65">{r.author}</p>
+        )}
+        {r.hint && (
+          <p className="mt-1 text-sm leading-relaxed text-foreground/65">{r.hint}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RecPlaceBody({ r }: { r: EmotionRecommendation }) {
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <MapPinIcon className="h-5 w-5 text-sage" />
+        <p className="text-lg font-bold leading-snug text-foreground sm:text-xl">{r.text}</p>
+      </div>
+      {r.author && (
+        <p className="text-sm font-medium text-foreground/60">📍 {r.author}</p>
+      )}
+      {r.hint && (
+        <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>
+      )}
+    </>
+  );
+}
+
+function RecMusicBody({ r }: { r: EmotionRecommendation }) {
+  return (
+    <>
+      <div className="flex items-center gap-3">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-200 text-violet-800">
+          <Music className="h-6 w-6" />
+        </span>
+        <p className="text-lg font-bold leading-snug text-foreground">{r.text}</p>
+      </div>
+      {r.hint && (
+        <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>
+      )}
+    </>
   );
 }

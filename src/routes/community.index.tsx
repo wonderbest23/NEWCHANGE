@@ -331,7 +331,7 @@ function CommunityIndex() {
           <ul className="pb-16">
             {filtered.map((p) => (
               <li key={p.id}>
-                <PostRow post={p} showRegion={scope === "all"} />
+                <PostRow post={p} showRegion />
               </li>
             ))}
           </ul>

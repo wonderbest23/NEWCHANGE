@@ -7,7 +7,7 @@ import { getCategory, type Comment, type Post } from "@/lib/community/types";
 import { getPost, listSameDistrictPosts } from "@/server/community/queries.functions";
 import { createComment, togglePostLike } from "@/server/community/mutations.functions";
 import { useAuth } from "@/lib/auth/mock-auth";
-import { ChevronLeft, Eye, ThumbsUp, MessageCircle, Flag, Share2, Loader2, Sparkles, Mail, ShieldCheck } from "lucide-react";
+import { ChevronLeft, Eye, ThumbsUp, MessageCircle, Flag, Share2, Loader2, Sparkles, Mail, ShieldCheck, User as UserIcon } from "lucide-react";
 import { anonLabelForPost, anonLabelForPair } from "@/lib/community/anon";
 import { sendDirectMessage } from "@/server/messages/messages.functions";
 import { toast } from "sonner";
@@ -195,19 +195,17 @@ function PostDetail() {
             {post.title}
           </h1>
 
-          {/* 작성자 정보 */}
+          {/* 작성자 정보 — 모든 작성자 "익명" 통일 + 동네 인증 배지 */}
           <div className="mt-5 flex items-center gap-3 border-b border-border/50 pb-4">
-            {/* 아바타 */}
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-rose-soft to-amber-soft text-sm font-semibold text-foreground/70">
-              {anonLabelForPost(post.id, post.author.id).replace("익명 #", "").slice(0, 2)}
+            {/* 아바타 — 사용자 아이콘 */}
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-rose-soft to-amber-soft text-foreground/60">
+              <UserIcon className="h-5 w-5" />
             </div>
 
             {/* 이름 + 메타정보 */}
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <span className="text-sm font-semibold text-foreground">
-                  {anonLabelForPost(post.id, post.author.id)}
-                </span>
+                <span className="text-sm font-semibold text-foreground">익명</span>
                 {userId === post.author.id && (
                   <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">나</span>
                 )}
@@ -381,7 +379,7 @@ function PostDetail() {
                     author={c.author}
                     postId={postId}
                     isMe={userId === c.author.id}
-                    anonLabel={c.ai_generated ? "동네지킴이 AI" : anonLabelForPost(postId, c.author.id)}
+                    anonLabel={c.ai_generated ? "동네지킴이 AI" : undefined}
                   />
                   <p className="mt-2 text-sm leading-relaxed text-foreground/90">{c.body}</p>
                   <p className="mt-2 text-[11px] text-muted-foreground">{c.createdAgo}</p>
