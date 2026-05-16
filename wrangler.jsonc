@@ -4,6 +4,7 @@
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
   "main": "@tanstack/react-start/server-entry",
+  "placement": { "mode": "smart" },
   "vars": {
     "SUPABASE_URL": "https://nurpesdatxgspsifsllu.supabase.co",
     "SUPABASE_PUBLISHABLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNzc3NDcsImV4cCI6MjA5Mjk1Mzc0N30.KKuLo8WiXhFmCSf7fDkFwX_8ecvrAOunTm1YkaHdBQ0",
