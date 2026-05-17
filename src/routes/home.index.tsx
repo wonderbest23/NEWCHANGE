@@ -15,6 +15,7 @@ import {
   HeartPulse,
   Calendar,
   TrendingUp,
+  RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTodayCheckin, useInvalidateTodayCheckin } from "@/lib/checkin/use-today-checkin";
@@ -22,6 +23,8 @@ import { CheckinOverview } from "@/components/checkin/CheckinOverview";
 import { RecommendationCarousel } from "@/components/checkin/RecommendationCarousel";
 import { trackEvent } from "@/lib/analytics/trackEvent";
 import { ANALYTICS_EVENTS } from "@/lib/analytics/eventNames";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/home/")({
   ssr: false,
@@ -171,6 +174,39 @@ function SeniorHome() {
             invalidateToday();
           }}
         />
+
+        {/* ── 어드민 전용 리셋 — 개발/테스트 편의 ──
+         *  관리자 계정에서만 표시. 오늘 안부 통화 기록을 삭제하고
+         *  "다시 대화하기" 상태로 되돌림. 반복 테스트용. */}
+        {appState?.role === "admin" && today?.checkin && user?.id && (
+          <button
+            type="button"
+            onClick={async () => {
+              const ok = window.confirm(
+                "[관리자] 오늘 안부 통화 기록을 모두 삭제하고 다시 시작합니다. 진행할까요?",
+              );
+              if (!ok) return;
+              try {
+                const kst = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+                const startISO = new Date(`${kst}T00:00:00+09:00`).toISOString();
+                const { error } = await supabase
+                  .from("health_checkins")
+                  .delete()
+                  .eq("senior_user_id", user.id)
+                  .gte("checkin_at", startISO);
+                if (error) throw error;
+                toast.success("오늘 기록을 삭제했어요. 다시 통화할 수 있어요.");
+                invalidateToday();
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "삭제에 실패했어요");
+              }
+            }}
+            className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-full border-2 border-dashed border-amber-warm/50 bg-amber-soft/30 px-4 py-2.5 text-xs font-semibold text-amber-warm transition hover:bg-amber-soft/60"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            [어드민] 오늘 기록 삭제 + 다시 대화하기
+          </button>
+        )}
       </section>
 
       {/* ─────────────────────────────────────────────────────────
