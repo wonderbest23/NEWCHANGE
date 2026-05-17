@@ -15,7 +15,8 @@ export const synthesizeAnswerSpeech = createServerFn({ method: "POST" })
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
 
-    const res = await fetch("https://api.openai.com/v1/audio/speech", {
+    const { OPENAI_BASE_URL } = await import("@/lib/ai/openai-base");
+    const res = await fetch(`${OPENAI_BASE_URL}/audio/speech`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,

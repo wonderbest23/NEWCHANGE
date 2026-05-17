@@ -38,7 +38,8 @@ export const createRealtimeSession = createServerFn({ method: "POST" })
       personaContext: mergedContext || undefined,
     });
 
-    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
+    const { OPENAI_BASE_URL } = await import("@/lib/ai/openai-base");
+    const response = await fetch(`${OPENAI_BASE_URL}/realtime/sessions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,

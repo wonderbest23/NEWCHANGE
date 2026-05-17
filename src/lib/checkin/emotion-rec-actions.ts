@@ -150,7 +150,8 @@ async function callOpenAI(emotionKey: EmotionKey, dateKey: string): Promise<Emot
   };
 
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const { OPENAI_BASE_URL } = await import("@/lib/ai/openai-base");
+    const res = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
