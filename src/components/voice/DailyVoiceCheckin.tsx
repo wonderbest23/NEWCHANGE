@@ -217,8 +217,15 @@ export function DailyVoiceCheckin({
         isProcessingTurnRef.current = false;
       }, 700);
     } else if (t === "error") {
+      const errMsg = (msg.error?.message ?? "") as string;
+      // OpenAI Realtime 의 경쟁 상태(race) 에러 — 첫 응답은 정상 진행 중이고
+      // 두 번째 response.create 만 거부된 무해한 케이스. UX 흐름 끊지 않게 무시.
+      // 예) "Conversation already has an active response in progress"
+      if (/active response in progress|already has an active/i.test(errMsg)) {
+        return;
+      }
       isProcessingTurnRef.current = false;
-      setError(msg.error?.message || "통화 중 오류가 발생했어요");
+      setError(errMsg || "통화 중 오류가 발생했어요");
     }
   };
 
