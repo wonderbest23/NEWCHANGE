@@ -21,6 +21,8 @@ import {
   ArrowRight,
   ChevronDown,
   SlidersHorizontal,
+  MessageCircleHeart,
+  PenLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WalkLeaderboard } from "@/components/engagement/WalkLeaderboard";
@@ -127,20 +129,33 @@ function CommunityIndex() {
 
   return (
     <SeniorAppLayout>
-      {/* Header — 제목 + 글쓰기 한 줄 */}
-      <section className="border-b border-border/50 bg-background">
-        <div className="mx-auto w-full max-w-3xl px-4 pt-5 pb-4 sm:px-6">
-          <div className="flex items-center gap-3">
-            <h1 className="font-display text-2xl font-semibold tracking-[-0.02em] text-foreground sm:text-3xl">
-              커뮤니티
+      {/* Header — 시니어용 큰 안내 + 글쓰기 */}
+      <section className="bg-background">
+        <div className="mx-auto w-full max-w-3xl px-4 pt-4 pb-5 sm:px-6">
+          <div className="rounded-3xl bg-gradient-to-br from-rose-soft/80 via-background to-sage-soft/70 p-5 shadow-soft">
+            <p className="inline-flex items-center gap-2 rounded-full bg-background/85 px-3 py-1 text-sm font-bold text-primary">
+              <MessageCircleHeart className="h-4 w-4" />
+              이야기방
+            </p>
+            <h1 className="mt-3 font-display text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+              이웃과 편하게 나눠요
             </h1>
+            <p className="mt-2 text-lg leading-relaxed text-foreground/70">
+              동네 소식, 생활 질문, 좋은 정보를 큰 글씨로 볼 수 있어요.
+            </p>
+            <Button asChild size="lg" variant="hero" className="mt-5 h-14 w-full rounded-full text-lg font-bold">
+              <Link to="/community/write">
+                <PenLine className="mr-2 h-5 w-5" />
+                글쓰기
+              </Link>
+            </Button>
           </div>
 
           {/* 동네/전국 — 전국 먼저, 동네 두 번째 */}
           <div
             role="tablist"
             aria-label="지역 범위"
-            className="mt-4 grid grid-cols-2 rounded-full border-2 border-border bg-surface p-1"
+            className="mt-5 grid grid-cols-2 rounded-2xl border-2 border-border bg-surface p-1.5"
           >
             {/* 전국 */}
             <button
@@ -149,13 +164,13 @@ function CommunityIndex() {
               aria-selected={scope === "all"}
               onClick={() => setScope("all")}
               className={cn(
-                "flex min-h-[44px] items-center justify-center gap-1.5 rounded-full text-sm font-semibold transition-all duration-200",
+                "flex min-h-[56px] items-center justify-center gap-2 rounded-xl text-lg font-bold transition-all duration-200",
                 scope === "all"
                   ? "bg-primary text-primary-foreground shadow-sm"
                   : "text-foreground/70 hover:text-foreground",
               )}
             >
-              <Globe2 className="h-4 w-4" />
+              <Globe2 className="h-5 w-5" />
               전국
             </button>
 
@@ -167,7 +182,7 @@ function CommunityIndex() {
               disabled={!userSigungu}
               onClick={() => userSigungu && setScope("local")}
               className={cn(
-                "relative flex min-h-[44px] items-center justify-center gap-1.5 overflow-hidden rounded-full text-sm font-semibold transition-all duration-200",
+                "relative flex min-h-[56px] items-center justify-center gap-2 overflow-hidden rounded-xl text-lg font-bold transition-all duration-200",
                 scope === "local"
                   ? "bg-primary text-primary-foreground shadow-sm"
                   : "text-foreground/70 hover:text-foreground",
@@ -181,7 +196,7 @@ function CommunityIndex() {
                   aria-hidden
                 />
               )}
-              <MapPin className={cn("h-4 w-4 shrink-0", scope !== "local" && userSigungu && "animate-bounce")} />
+              <MapPin className={cn("h-5 w-5 shrink-0", scope !== "local" && userSigungu && "animate-bounce")} />
               <span>{userSigungu || "우리 동네"}</span>
             </button>
           </div>
@@ -193,22 +208,22 @@ function CommunityIndex() {
               type="button"
               onClick={() => setShowCategories((v) => !v)}
               className={cn(
-                "flex w-full items-center justify-between gap-3 rounded-2xl border-2 px-4 py-3 transition-all",
+                "flex min-h-14 w-full items-center justify-between gap-3 rounded-2xl border-2 px-4 py-3 transition-all",
                 showCategories
                   ? "border-primary/60 bg-primary/5"
                   : "border-border/60 bg-surface/60 hover:border-border",
               )}
             >
-              <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <SlidersHorizontal className="h-4 w-4 text-primary" />
+              <span className="flex items-center gap-2 text-lg font-bold text-foreground">
+                <SlidersHorizontal className="h-5 w-5 text-primary" />
                 게시판
-                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-bold text-primary">
+                <span className="rounded-full bg-primary/15 px-3 py-1 text-sm font-bold text-primary">
                   {activeCatLabel}
                 </span>
               </span>
               <ChevronDown
                 className={cn(
-                  "h-4 w-4 shrink-0 text-foreground/50 transition-transform duration-200",
+                  "h-5 w-5 shrink-0 text-foreground/50 transition-transform duration-200",
                   showCategories && "rotate-180",
                 )}
               />
@@ -216,7 +231,7 @@ function CommunityIndex() {
 
             {/* 카테고리 그리드 — 펼쳐질 때만 표시 */}
             {showCategories && (
-              <div className="mt-2 grid grid-cols-3 gap-2 rounded-2xl border-2 border-border/50 bg-surface/40 p-3 sm:grid-cols-4">
+              <div className="mt-3 grid grid-cols-2 gap-3 rounded-2xl border-2 border-border/50 bg-surface/40 p-3 sm:grid-cols-3">
                 <CatTile
                   active={activeCat === "all"}
                   onClick={() => { setActiveCat("all"); setShowCategories(false); }}
@@ -250,9 +265,9 @@ function CommunityIndex() {
 
           {/* 부가 정보는 접어두기 — 가독성 우선 */}
           <details className="group mt-4 rounded-2xl border border-border/60 bg-surface/60">
-            <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 py-2.5 text-sm font-medium text-foreground/80 [&::-webkit-details-marker]:hidden">
+            <summary className="flex min-h-[52px] cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 py-3 text-base font-bold text-foreground/80 [&::-webkit-details-marker]:hidden">
               <span className="inline-flex items-center gap-2">
-                <Lightbulb className="h-4 w-4 text-primary" />
+                <Lightbulb className="h-5 w-5 text-primary" />
                 꿀팁 · 산책 순위 더 보기
               </span>
               <ArrowRight className="h-4 w-4 transition-transform group-open:rotate-90" />
@@ -279,34 +294,34 @@ function CommunityIndex() {
 
       {/* Toolbar — 정렬·검색 */}
       <section className="mx-auto w-full max-w-3xl px-4 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/30 py-2.5">
-          <div className="inline-flex items-center gap-3">
-            <SortBtn active={sort === "recent"} onClick={() => setSort("recent")} icon={<Clock className="h-4 w-4" />}>
+        <div className="mt-2 rounded-2xl border border-border/70 bg-background p-3 shadow-soft">
+          <div className="grid grid-cols-3 gap-2">
+            <SortBtn active={sort === "recent"} onClick={() => setSort("recent")} icon={<Clock className="h-5 w-5" />}>
               최신
             </SortBtn>
-            <SortBtn active={sort === "hot"} onClick={() => setSort("hot")} icon={<Flame className="h-4 w-4" />}>
+            <SortBtn active={sort === "hot"} onClick={() => setSort("hot")} icon={<Flame className="h-5 w-5" />}>
               인기
             </SortBtn>
-            <SortBtn active={sort === "trending"} onClick={() => setSort("trending")} icon={<TrendingUp className="h-4 w-4" />}>
+            <SortBtn active={sort === "trending"} onClick={() => setSort("trending")} icon={<TrendingUp className="h-5 w-5" />}>
               주목
             </SortBtn>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="rounded-full bg-muted px-2.5 py-1 font-medium text-foreground/80">
+          <div className="mt-3 flex items-center justify-between gap-2 text-sm text-muted-foreground">
+            <span className="rounded-full bg-muted px-3 py-1.5 font-bold text-foreground/80">
               {scope === "local" && userSigungu ? userSigungu : "전국"} · {activeCatLabel}
             </span>
             <button
               type="button"
               onClick={() => setSearchOpen((o) => !o)}
               className={cn(
-                "inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
+                "inline-flex h-11 w-11 items-center justify-center rounded-full border transition-colors",
                 searchOpen
                   ? "border-primary bg-primary text-primary-foreground"
                   : "border-border bg-background text-foreground hover:border-primary/40",
               )}
               aria-label="검색"
             >
-              <Search className="h-4 w-4" />
+              <Search className="h-5 w-5" />
             </button>
           </div>
         </div>
@@ -317,7 +332,7 @@ function CommunityIndex() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="제목·내용 검색"
-              className="w-full rounded-2xl border-2 border-border bg-background px-4 py-3 text-base focus:border-primary focus:outline-none"
+              className="w-full rounded-2xl border-2 border-border bg-background px-5 py-4 text-lg focus:border-primary focus:outline-none"
             />
           </div>
         )}
@@ -328,7 +343,7 @@ function CommunityIndex() {
         ) : filtered.length === 0 ? (
           <EmptyState scope={scope} sigungu={userSigungu} onSwitchAll={() => setScope("all")} />
         ) : (
-          <ul className="pb-16">
+          <ul className="space-y-3 pb-16 pt-4">
             {filtered.map((p) => (
               <li key={p.id}>
                 <PostRow post={p} showRegion />
@@ -361,7 +376,7 @@ function CatTile({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "relative flex min-h-[78px] flex-col items-center justify-center gap-1 rounded-2xl border-2 px-2 py-2.5 text-center transition active:scale-[0.98]",
+        "relative flex min-h-[92px] flex-col items-center justify-center gap-2 rounded-2xl border-2 px-3 py-3 text-center transition active:scale-[0.98]",
         active
           ? "border-primary bg-primary text-primary-foreground shadow-md"
           : "border-border bg-background text-foreground hover:border-primary/40",
@@ -370,11 +385,11 @@ function CatTile({
       {icon && (
         <span className={cn(active ? "text-primary-foreground" : "text-primary")}>{icon}</span>
       )}
-      <span className="text-sm font-semibold leading-tight">{label}</span>
+      <span className="text-base font-bold leading-tight">{label}</span>
       {typeof count === "number" && count > 0 && (
         <span
           className={cn(
-            "text-[11px] font-medium",
+            "text-sm font-semibold",
             active ? "text-primary-foreground/80" : "text-muted-foreground",
           )}
         >
@@ -401,8 +416,10 @@ function SortBtn({
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1 transition-colors",
-        active ? "font-semibold text-foreground" : "text-muted-foreground hover:text-foreground",
+        "inline-flex min-h-12 items-center justify-center gap-1.5 rounded-xl border px-3 text-base font-bold transition-colors",
+        active
+          ? "border-primary bg-primary text-primary-foreground shadow-sm"
+          : "border-border bg-surface text-foreground/70 hover:text-foreground",
       )}
     >
       {icon}
@@ -421,22 +438,22 @@ function EmptyState({
   onSwitchAll: () => void;
 }) {
   return (
-    <div className="my-12 rounded-2xl border border-dashed border-border bg-surface/40 p-10 text-center">
-      <p className="text-base font-medium text-foreground">
+    <div className="my-12 rounded-3xl border border-dashed border-border bg-surface/40 p-10 text-center">
+      <p className="text-2xl font-bold text-foreground">
         {scope === "local" && sigungu
           ? `${sigungu}에 아직 글이 없어요`
           : "아직 글이 없어요"}
       </p>
-      <p className="mt-1 text-[13px] text-muted-foreground">
+      <p className="mt-2 text-base text-muted-foreground">
         {scope === "local" ? "첫 번째 동네 이야기를 들려주세요." : "첫 번째 이야기를 들려주세요."}
       </p>
-      <div className="mt-4 flex justify-center gap-2">
+      <div className="mt-5 flex justify-center gap-2">
         {scope === "local" && (
-          <Button size="sm" variant="outline" className="rounded-full" onClick={onSwitchAll}>
+          <Button size="lg" variant="outline" className="h-12 rounded-full px-5 font-bold" onClick={onSwitchAll}>
             전국 글 보기
           </Button>
         )}
-        <Button asChild size="sm" variant="hero" className="rounded-full">
+        <Button asChild size="lg" variant="hero" className="h-12 rounded-full px-5 font-bold">
           <Link to="/community/write">글쓰기</Link>
         </Button>
       </div>

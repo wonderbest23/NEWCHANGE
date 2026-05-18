@@ -11,38 +11,42 @@ export function PostRow({ post, showRegion = true }: { post: Post; showRegion?: 
     <Link
       to="/community/post/$postId"
       params={{ postId: post.id }}
-      className="group block border-b border-border/50 px-2 py-4 transition-colors hover:bg-surface/60 sm:px-3"
+      className="group block rounded-3xl border border-border/70 bg-background px-5 py-5 shadow-soft transition-colors hover:border-primary/30 hover:bg-surface/60"
     >
-      <div className="flex items-center gap-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         {post.pinned && (
-          <span className="inline-flex items-center gap-0.5 rounded-sm bg-rose-soft px-1.5 py-0.5 font-semibold text-primary">
-            <Pin className="h-3 w-3" />
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-soft px-2.5 py-1 font-bold text-primary">
+            <Pin className="h-3.5 w-3.5" />
+            고정
           </span>
         )}
-        {cat && <span className="font-medium text-foreground/60">{cat.name}</span>}
-        <span className="text-muted-foreground">·</span>
-        <span className="text-muted-foreground">{post.createdAgo}</span>
+        {cat && (
+          <span className="rounded-full bg-muted px-2.5 py-1 font-bold text-foreground/70">
+            {cat.name}
+          </span>
+        )}
+        <span className="font-medium text-muted-foreground">{post.createdAgo}</span>
       </div>
 
-      <h3 className="mt-1.5 line-clamp-2 text-base font-semibold tracking-tight text-foreground group-hover:text-primary sm:text-[17px]">
+      <h3 className="mt-3 line-clamp-2 text-2xl font-bold leading-snug tracking-tight text-foreground group-hover:text-primary">
         {post.title}
       </h3>
-      <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">{post.body}</p>
+      <p className="mt-2 line-clamp-2 text-base leading-relaxed text-muted-foreground">{post.body}</p>
 
-      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="font-medium text-foreground/60">{anon}</span>
+          <span className="font-bold text-foreground/60">{anon}</span>
           {showRegion && district && (
-            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-sage-soft px-2 py-0.5 text-[11px] font-semibold text-sage">
-              <ShieldCheck className="h-3 w-3" />
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sage-soft px-2.5 py-1 text-sm font-bold text-sage">
+              <ShieldCheck className="h-3.5 w-3.5" />
               {district}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-0.5"><Eye className="h-3.5 w-3.5" />{post.views}</span>
-          <span className="inline-flex items-center gap-0.5"><ThumbsUp className="h-3.5 w-3.5" />{post.likes}</span>
-          <span className="inline-flex items-center gap-0.5"><MessageCircle className="h-3.5 w-3.5" />{post.comments}</span>
+        <div className="flex items-center gap-3 font-semibold">
+          <span className="inline-flex items-center gap-1"><Eye className="h-4 w-4" />{post.views}</span>
+          <span className="inline-flex items-center gap-1"><ThumbsUp className="h-4 w-4" />{post.likes}</span>
+          <span className="inline-flex items-center gap-1"><MessageCircle className="h-4 w-4" />{post.comments}</span>
         </div>
       </div>
     </Link>

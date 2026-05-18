@@ -3,7 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth/mock-auth";
 import { SeniorAppLayout } from "@/components/layouts/SeniorAppLayout";
 import { Button } from "@/components/ui/button";
-import { Phone, Share2, Bookmark, Loader2, Calendar, MapPin, Sparkles, Check, LayoutGrid, PartyPopper, Building2, Stethoscope, HeartPulse, Megaphone, X, Briefcase, Smartphone, UtensilsCrossed, BookOpen, ChevronRight } from "lucide-react";
+import { Phone, Share2, Bookmark, Loader2, Calendar, MapPin, Sparkles, Check, LayoutGrid, PartyPopper, Building2, Stethoscope, HeartPulse, Megaphone, X, Briefcase, Smartphone, UtensilsCrossed, BookOpen, ChevronRight, Navigation } from "lucide-react";
 import { RegionPicker } from "@/components/local/RegionPicker";
 import {
   listLocalResources,
@@ -15,6 +15,7 @@ import { getSessionCached } from "@/lib/auth/session-cache";
 import { trackEvent } from "@/lib/analytics/trackEvent";
 import { ANALYTICS_EVENTS } from "@/lib/analytics/eventNames";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/local")({
   ssr: false,
@@ -102,6 +103,7 @@ function LocalPage() {
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [userLoc, setUserLoc] = useState<{ lat: number; lon: number } | null>(null);
   const [locDenied, setLocDenied] = useState(false);
+  const [regionOpen, setRegionOpen] = useState(() => !region);
   const [recDismissed, setRecDismissed] = useState(() => {
     if (typeof window === "undefined") return false;
     return sessionStorage.getItem("local:recDismissed") === "1";
@@ -238,14 +240,81 @@ function LocalPage() {
     } catch { toast.error("저장에 실패했어요"); }
   };
 
+  const categoryLabel = CATEGORIES.find((c) => c.key === category)?.label ?? "전체";
+
   return (
     <SeniorAppLayout>
-      <h1 className="px-1 font-display text-2xl font-semibold tracking-[-0.02em] text-foreground sm:text-3xl">내 동네 소식</h1>
+      <header className="rounded-3xl bg-gradient-to-br from-rose-soft/80 via-background to-sage-soft/70 px-5 py-6 shadow-soft">
+        <p className="inline-flex items-center gap-2 rounded-full bg-background/80 px-3 py-1 text-sm font-bold text-primary">
+          <MapPin className="h-4 w-4" />
+          우리 동네
+        </p>
+        <h1 className="mt-3 font-display text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+          필요한 소식을 쉽게 찾아요
+        </h1>
+        <p className="mt-2 text-lg leading-relaxed text-foreground/70">
+          복지관, 보건소, 행사, 강좌 정보를 큰 글씨로 모아봤어요.
+        </p>
+      </header>
+
+      {/* 지역 선택 — 먼저 고르고, 선택 후에는 요약만 보이게 */}
+      <section className="mt-5 rounded-3xl border-2 border-primary/20 bg-background p-5 shadow-soft">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-sm font-bold text-primary">
+              1단계
+            </p>
+            <h2 className="mt-3 font-display text-2xl font-bold text-foreground">
+              먼저 지역을 선택해 주세요
+            </h2>
+            {!regionOpen && (
+              <p className="mt-2 text-lg font-bold text-foreground">
+                {region || "서울시 전체"} 소식을 보고 있어요
+              </p>
+            )}
+          </div>
+          {!regionOpen && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-11 shrink-0 rounded-full px-4 text-sm font-bold"
+              onClick={() => setRegionOpen(true)}
+            >
+              변경
+            </Button>
+          )}
+        </div>
+
+        {regionOpen ? (
+          <div className="mt-4">
+            <RegionPicker
+              value={region}
+              onChange={(next) => {
+                setRegion(next);
+                setRegionOpen(false);
+              }}
+            />
+            <p className="mt-3 text-sm font-medium text-foreground/60">
+              지역을 고르면 아래 소식이 그 지역 중심으로 정리돼요.
+            </p>
+          </div>
+        ) : (
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+            <span className="rounded-full bg-muted px-3 py-1.5 font-bold text-foreground/80">
+              지역: {region || "서울시 전체"}
+            </span>
+            <span className="rounded-full bg-muted px-3 py-1.5 font-bold text-foreground/80">
+              분야: {categoryLabel}
+            </span>
+          </div>
+        )}
+      </section>
 
       {recommended.length > 0 && !recDismissed && (() => {
         const r = recommended[0];
         return (
-          <section className="relative mt-5 rounded-3xl border-2 border-primary/30 bg-primary/5 p-4">
+          <section className="relative mt-5 rounded-3xl border-2 border-primary/25 bg-primary/5 p-5 shadow-soft">
             <button
               type="button"
               onClick={() => {
@@ -257,20 +326,20 @@ function LocalPage() {
             >
               <X className="h-4 w-4" />
             </button>
-            <div className="mb-3 flex items-center gap-2 pr-10 text-primary">
+            <div className="mb-4 flex items-center gap-2 pr-10 text-primary">
               <Sparkles className="h-5 w-5" />
-              <h2 className="text-lg font-semibold">오늘의 추천</h2>
+              <h2 className="text-xl font-bold">오늘 가볼 만한 곳</h2>
             </div>
-            <div className="rounded-2xl bg-background p-4">
-              <p className="text-lg font-semibold text-foreground">{r.name}</p>
+            <div className="rounded-2xl bg-background p-5">
+              <p className="text-2xl font-bold leading-snug text-foreground">{r.name}</p>
               {r.description && (
-                <p className="mt-1.5 line-clamp-2 text-base leading-snug text-foreground/80">
+                <p className="mt-2 line-clamp-3 text-lg leading-relaxed text-foreground/75">
                   {r.description}
                 </p>
               )}
-              <div className="mt-3 space-y-1.5 text-sm text-foreground/70">
+              <div className="mt-4 space-y-2.5 text-base text-foreground/70">
                 <div className="flex items-start gap-1.5">
-                  <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+                  <MapPin className="mt-1 h-5 w-5 shrink-0 text-primary/70" />
                   <span className="min-w-0">
                     {(r as any).address || r.district || r.region_sigungu}
                     {(() => {
@@ -292,11 +361,11 @@ function LocalPage() {
                 </div>
                 {locDenied && !userLoc && (
                   <div className="flex items-start gap-1.5">
-                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-foreground/40" />
+                    <Navigation className="mt-0.5 h-5 w-5 shrink-0 text-foreground/40" />
                     <button
                       type="button"
                       onClick={requestLocation}
-                      className="text-left text-sm font-medium text-primary underline-offset-2 hover:underline"
+                      className="text-left text-base font-bold text-primary underline-offset-4 hover:underline"
                     >
                       위치 권한 켜고 거리 보기
                     </button>
@@ -304,7 +373,7 @@ function LocalPage() {
                 )}
                 {((r as any).opening_hours || r.start_date) && (
                   <div className="flex items-start gap-1.5">
-                    <Calendar className="mt-0.5 h-4 w-4 shrink-0 text-primary/70" />
+                    <Calendar className="mt-1 h-5 w-5 shrink-0 text-primary/70" />
                     <span>
                       {(r as any).opening_hours || (r.start_date ? `${r.start_date} 시작` : "")}
                     </span>
@@ -312,9 +381,9 @@ function LocalPage() {
                 )}
               </div>
               {r.recommendation_tags && r.recommendation_tags.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1">
+                <div className="mt-4 flex flex-wrap gap-1.5">
                   {r.recommendation_tags.slice(0, 4).map((t) => (
-                    <span key={t} className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">{t}</span>
+                    <span key={t} className="rounded-full bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">{t}</span>
                   ))}
                 </div>
               )}
@@ -323,9 +392,13 @@ function LocalPage() {
         );
       })()}
 
-      {/* 카테고리 — 3열 컴팩트 타일 */}
-      <section className="mt-5">
-        <div className="grid grid-cols-3 gap-2">
+      {/* 카테고리 — 큰 터치 타일 */}
+      <section className="mt-6">
+        <div className="mb-3 flex items-end justify-between px-1">
+          <h2 className="font-display text-2xl font-bold text-foreground">2단계: 무엇을 찾으세요?</h2>
+          <span className="text-sm font-medium text-foreground/55">눌러서 골라요</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {CATEGORIES.map((c) => {
             const Icon = c.icon;
             const selected = category === c.key;
@@ -335,37 +408,34 @@ function LocalPage() {
                 type="button"
                 aria-pressed={selected}
                 onClick={() => setCategory(c.key)}
-                className={`relative flex min-h-[72px] flex-col items-center justify-center gap-1 rounded-2xl border-2 px-2 py-2 text-center transition active:scale-[0.98] ${
+                className={`relative flex min-h-[92px] flex-col items-center justify-center gap-2 rounded-2xl border-2 px-3 py-3 text-center transition active:scale-[0.98] ${
                   selected
                     ? "border-primary bg-primary text-primary-foreground shadow-md"
                     : "border-border bg-background text-foreground hover:border-primary/40"
                 }`}
               >
-                <Icon className={`h-5 w-5 ${selected ? "text-primary-foreground" : "text-primary"}`} />
-                <span className="text-sm font-semibold leading-tight">{c.label}</span>
+                <Icon className={`h-7 w-7 ${selected ? "text-primary-foreground" : "text-primary"}`} />
+                <span className="text-base font-bold leading-tight">{c.label}</span>
+                {selected && (
+                  <span className="absolute right-2 top-2 rounded-full bg-background/20 px-2 py-0.5 text-xs font-bold">
+                    선택됨
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
       </section>
 
-      {/* 지역 선택 + 현재 조건 한 줄 요약 */}
-      <section className="mt-4 space-y-2">
-        <RegionPicker value={region} onChange={setRegion} />
-        <div className="flex items-center gap-2 px-1 text-xs text-foreground/70">
-          <span>지금 보는 소식</span>
-          <span className="rounded-full bg-muted px-2.5 py-1 font-medium text-foreground/80">
-            {(region || "서울시 전체")} · {CATEGORIES.find((c) => c.key === category)?.label ?? "전체"}
-          </span>
-        </div>
-      </section>
-
       {busy ? (
-        <div className="flex items-center justify-center py-12 text-foreground/60">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> 불러오는 중…
+        <div className="flex items-center justify-center rounded-3xl bg-background py-14 text-lg font-bold text-foreground/60">
+          <Loader2 className="mr-2 h-6 w-6 animate-spin" /> 동네 소식을 불러오는 중…
         </div>
       ) : grouped.length === 0 ? (
-        <p className="py-12 text-center text-foreground/60">표시할 정보가 없어요.</p>
+        <div className="mt-6 rounded-3xl border border-border/70 bg-background p-8 text-center shadow-soft">
+          <p className="text-xl font-bold text-foreground">표시할 정보가 없어요</p>
+          <p className="mt-2 text-base text-foreground/60">지역이나 카테고리를 바꿔서 다시 확인해 보세요.</p>
+        </div>
       ) : (
         <DistrictGroupedList
           grouped={grouped}
@@ -392,7 +462,7 @@ function DistrictGroupedList({
   savedIds: Set<string>;
   onSave: (id: string) => void;
 }) {
-  const DIST_PAGE = 5;
+  const DIST_PAGE = 3;
   const [shownDist, setShownDist] = useState(DIST_PAGE);
   // grouped 길이가 바뀌면(필터/검색 변경) 첫 페이지부터 다시 시작
   useEffect(() => {
@@ -402,7 +472,10 @@ function DistrictGroupedList({
   const remaining = grouped.length - shownDist;
 
   return (
-    <div className="mt-5 space-y-6">
+    <div className="mt-6 space-y-6">
+      <div className="rounded-2xl bg-surface px-4 py-3 text-base font-semibold text-foreground/70">
+        아래에서 자치구와 분야를 눌러 자세한 정보를 펼쳐볼 수 있어요.
+      </div>
       {visible.map(({ district, total, groups }) => (
         <DistrictSection
           key={district}
@@ -419,12 +492,12 @@ function DistrictGroupedList({
           <Button
             variant="hero"
             size="lg"
-            className="h-12 gap-2 rounded-full px-6 text-base font-semibold"
+            className="h-14 gap-2 rounded-full px-7 text-lg font-bold"
             onClick={() => setShownDist((n) => Math.min(n + DIST_PAGE, grouped.length))}
           >
             자치구 {Math.min(remaining, DIST_PAGE)}개 더 보기
           </Button>
-          <p className="text-xs text-foreground/55">
+          <p className="text-sm font-medium text-foreground/55">
             {shownDist} / {grouped.length} 자치구
           </p>
         </div>
@@ -434,7 +507,7 @@ function DistrictGroupedList({
           <Button
             variant="ghost"
             size="sm"
-            className="h-9 rounded-full px-4 text-xs text-foreground/60"
+            className="h-11 rounded-full px-5 text-sm font-semibold text-foreground/60"
             onClick={() => {
               setShownDist(DIST_PAGE);
               window.scrollTo({ top: 0, behavior: "smooth" });
@@ -469,7 +542,7 @@ function DistrictSection({
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set());
   // 카테고리별 페이지네이션 — 한 카테고리당 4개씩 더 보여줌.
   // 큰 자치구(예: 강서구 51건)에서 모든 카드가 펼쳐지지 않도록 기본은 PAGE_SIZE 만큼만.
-  const PAGE_SIZE = 4;
+  const PAGE_SIZE = 2;
   const [shownByType, setShownByType] = useState<Record<string, number>>({});
   const showCount = (t: string) => shownByType[t] ?? PAGE_SIZE;
   const showMore = (t: string, total: number) => {
@@ -487,19 +560,29 @@ function DistrictSection({
     });
   };
 
+  useEffect(() => {
+    setCollapsedTypes(new Set(groups.slice(1).map((g) => g.type)));
+    setShownByType({});
+  }, [district, groups]);
+
   return (
-    <section className="w-full max-w-full overflow-hidden rounded-3xl border-2 border-border/70 bg-background">
+    <section className="w-full max-w-full overflow-hidden rounded-3xl border-2 border-border/70 bg-background shadow-soft">
       {/* 자치구 헤더 — 그라데이션 + 큰 타이틀 + 카운트 칩 */}
-      <header className="flex items-baseline justify-between gap-3 border-b border-border/60 bg-gradient-to-r from-rose-soft/60 via-amber-soft/40 to-background px-5 py-4">
-        <div className="flex items-baseline gap-2.5">
-          <MapPin className="h-5 w-5 self-center text-primary" />
-          <h2 className="font-display text-2xl font-bold tracking-tight text-foreground">
-            {district}
-          </h2>
+      <header className="border-b border-border/60 bg-gradient-to-r from-rose-soft/60 via-amber-soft/40 to-background px-5 py-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-baseline gap-2.5">
+            <MapPin className="h-6 w-6 self-center text-primary" />
+            <h2 className="font-display text-3xl font-bold tracking-tight text-foreground">
+              {district}
+            </h2>
+          </div>
+          <span className="inline-flex items-center rounded-full bg-foreground/85 px-4 py-1.5 text-sm font-bold text-background">
+            {total}건
+          </span>
         </div>
-        <span className="inline-flex items-center rounded-full bg-foreground/85 px-3 py-1 text-xs font-bold text-background">
-          {total}건
-        </span>
+        <p className="mt-2 text-sm font-semibold text-foreground/55">
+          분야를 누르면 열리고, 다시 누르면 접혀요.
+        </p>
       </header>
 
       {/* 카테고리 별 그룹 */}
@@ -509,23 +592,36 @@ function DistrictSection({
           const Icon = meta.icon;
           const collapsed = collapsedTypes.has(type);
           return (
-            <div key={type} className="px-3 py-3 sm:px-4">
+            <div key={type} className="px-4 py-4">
               {/* 카테고리 헤더 */}
               <button
                 type="button"
                 onClick={() => toggle(type)}
                 aria-expanded={!collapsed}
-                className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-surface"
+                className={cn(
+                  "flex min-h-16 w-full items-center gap-3 rounded-2xl border-2 px-3 py-3 text-left transition",
+                  collapsed
+                    ? "border-border/70 bg-surface/70 hover:border-primary/30"
+                    : "border-primary/30 bg-primary/5",
+                )}
               >
-                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${meta.tone}`}>
-                  <Icon className="h-4 w-4" />
+                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${meta.tone}`}>
+                  <Icon className="h-5 w-5" />
                 </span>
-                <span className="font-display text-base font-bold text-foreground">{meta.label}</span>
-                <span className={`ml-1 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-bold ${meta.chip}`}>
+                <span className="font-display text-xl font-bold text-foreground">{meta.label}</span>
+                <span className={`ml-1 inline-flex items-center rounded-full px-3 py-1 text-sm font-bold ${meta.chip}`}>
                   {typeItems.length}
                 </span>
+                <span
+                  className={cn(
+                    "ml-auto shrink-0 rounded-full px-3 py-1 text-sm font-bold",
+                    collapsed ? "bg-background text-foreground/60" : "bg-primary text-primary-foreground",
+                  )}
+                >
+                  {collapsed ? "열기" : "접기"}
+                </span>
                 <ChevronRight
-                  className={`ml-auto h-4 w-4 text-foreground/40 transition-transform ${collapsed ? "" : "rotate-90"}`}
+                  className={`h-5 w-5 text-foreground/40 transition-transform ${collapsed ? "" : "rotate-90"}`}
                 />
               </button>
 
@@ -536,7 +632,7 @@ function DistrictSection({
                 const remaining = typeItems.length - shown;
                 return (
                   <>
-                    <ul className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    <ul className="mt-3 grid grid-cols-1 gap-3">
                       {visible.map((r) => (
                         <ResourceCard
                           key={r.id}
@@ -553,7 +649,7 @@ function DistrictSection({
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-9 gap-1 rounded-full px-4 text-xs font-semibold"
+                            className="h-11 gap-1 rounded-full px-5 text-sm font-bold"
                             onClick={() => showMore(type, typeItems.length)}
                           >
                             더 보기 +{Math.min(remaining, PAGE_SIZE * 2)}
@@ -563,7 +659,7 @@ function DistrictSection({
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-9 gap-1 rounded-full px-3 text-xs text-foreground/60"
+                            className="h-11 gap-1 rounded-full px-4 text-sm font-semibold text-foreground/60"
                             onClick={() => reset(type)}
                           >
                             접기
@@ -609,33 +705,33 @@ function ResourceCard({
   const hasActions = !!(r.phone || r.source_url);
 
   return (
-    <li className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border/50 bg-background">
+    <li className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-background shadow-sm">
       {/* 정보 영역 — 클릭 유도 없음 */}
-      <div className="flex flex-1 flex-col gap-2.5 p-4">
+      <div className="flex flex-1 flex-col gap-3.5 p-5">
         {/* 이름 + 거리 */}
         <div className="flex items-start justify-between gap-2">
-          <p className="min-w-0 flex-1 break-words text-xl font-bold leading-snug text-foreground">
+          <p className="min-w-0 flex-1 break-words text-2xl font-bold leading-snug text-foreground">
             {r.name}
           </p>
           {distLabel && (
-            <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+            <span className="shrink-0 rounded-full bg-primary/10 px-3 py-1 text-sm font-bold text-primary">
               {distLabel}
             </span>
           )}
         </div>
 
         {/* 주소 / 일정 */}
-        <div className="min-w-0 space-y-1.5">
+        <div className="min-w-0 space-y-2.5">
           {r.address && (
-            <div className="flex min-w-0 items-start gap-1.5 text-sm text-foreground/70">
-              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-foreground/40" />
-              <span className="min-w-0 flex-1 break-words leading-snug">{r.address}</span>
+            <div className="flex min-w-0 items-start gap-2 text-base text-foreground/70">
+              <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-foreground/40" />
+              <span className="min-w-0 flex-1 break-words leading-relaxed">{r.address}</span>
             </div>
           )}
           {r.start_date && (
-            <div className="flex min-w-0 items-center gap-1.5 text-sm text-foreground/70">
-              <Calendar className="h-4 w-4 shrink-0 text-foreground/40" />
-              <span className="min-w-0 flex-1 truncate">
+            <div className="flex min-w-0 items-center gap-2 text-base text-foreground/70">
+              <Calendar className="h-5 w-5 shrink-0 text-foreground/40" />
+              <span className="min-w-0 flex-1 break-words">
                 {r.start_date}{r.end_date && r.end_date !== r.start_date ? ` ~ ${r.end_date}` : ""}
               </span>
             </div>
@@ -644,16 +740,16 @@ function ResourceCard({
 
         {/* 설명 */}
         {r.description && (
-          <p className="break-words text-sm leading-relaxed text-foreground/60 line-clamp-2">
+          <p className="break-words rounded-2xl bg-surface px-4 py-3 text-base leading-relaxed text-foreground/70 line-clamp-3">
             {r.description}
           </p>
         )}
 
         {/* 태그 */}
         {r.recommendation_tags && r.recommendation_tags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1.5">
             {r.recommendation_tags.slice(0, 3).map((t) => (
-              <span key={t} className={`max-w-full truncate rounded-full px-2 py-0.5 text-xs font-medium ${meta.chip}`}>
+              <span key={t} className={`max-w-full truncate rounded-full px-3 py-1 text-sm font-semibold ${meta.chip}`}>
                 #{t}
               </span>
             ))}
@@ -662,13 +758,13 @@ function ResourceCard({
       </div>
 
       {/* 액션 바 — 항상 하단에 분리된 영역 */}
-      <div className="flex items-center gap-1.5 border-t border-border/40 bg-surface/50 px-3 py-2.5">
+      <div className="flex items-center gap-2 border-t border-border/40 bg-surface/50 px-4 py-3">
         {r.phone && (
           <a
             href={`tel:${r.phone}`}
-            className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-primary px-3 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+            className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-primary px-4 text-base font-bold text-primary-foreground transition hover:opacity-90"
           >
-            <Phone className="h-3.5 w-3.5" />
+            <Phone className="h-5 w-5" />
             전화하기
           </a>
         )}
@@ -677,27 +773,27 @@ function ResourceCard({
             href={r.source_url}
             target="_blank"
             rel="noreferrer"
-            className={`inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full border border-border px-3 text-sm font-medium text-foreground transition hover:border-primary/50 hover:text-primary ${r.phone ? "" : "bg-background"}`}
+            className={`inline-flex h-12 flex-1 items-center justify-center gap-1 rounded-full border border-border px-4 text-base font-bold text-foreground transition hover:border-primary/50 hover:text-primary ${r.phone ? "" : "bg-background"}`}
           >
             자세히 보기 ↗
           </a>
         )}
-        {!hasActions && <span className="flex-1 text-xs text-muted-foreground">정보 참고용</span>}
+        {!hasActions && <span className="flex-1 text-sm font-medium text-muted-foreground">정보 참고용</span>}
         <button
           type="button"
           onClick={share}
           aria-label="공유"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-muted hover:text-foreground"
         >
-          <Share2 className="h-4 w-4" />
+          <Share2 className="h-5 w-5" />
         </button>
         <button
           type="button"
           onClick={() => onSave(r.id)}
           aria-label={saved ? "저장 해제" : "저장"}
-          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition ${saved ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition ${saved ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
         >
-          {saved ? <Check className="h-4 w-4" /> : <Bookmark className="h-4 w-4" />}
+          {saved ? <Check className="h-5 w-5" /> : <Bookmark className="h-5 w-5" />}
         </button>
       </div>
     </li>

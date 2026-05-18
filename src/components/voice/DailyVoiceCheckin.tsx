@@ -360,7 +360,15 @@ export function DailyVoiceCheckin({
       };
 
       pc.ontrack = (e) => {
-        if (audioElRef.current) audioElRef.current.srcObject = e.streams[0];
+        if (audioElRef.current) {
+          audioElRef.current.srcObject = e.streams[0];
+          audioElRef.current.muted = false;
+          audioElRef.current.volume = 1;
+          audioElRef.current.play().catch((err) => {
+            console.warn("[checkin-audio] playback blocked", err);
+            setError("AI 목소리 재생이 차단됐어요. 휴대폰 무음 모드와 브라우저 권한을 확인해 주세요.");
+          });
+        }
       };
       localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
 
@@ -751,7 +759,7 @@ export function DailyVoiceCheckin({
             )}
           </footer>
 
-          <audio ref={audioElRef} autoPlay playsInline className="hidden" />
+          <audio ref={audioElRef} autoPlay playsInline className="pointer-events-none absolute h-px w-px opacity-0" />
         </div>
       </>
     );
@@ -890,7 +898,7 @@ export function DailyVoiceCheckin({
         </div>
       )}
 
-      <audio ref={audioElRef} autoPlay playsInline className="hidden" />
+      <audio ref={audioElRef} autoPlay playsInline className="pointer-events-none absolute h-px w-px opacity-0" />
     </div>
   );
 }

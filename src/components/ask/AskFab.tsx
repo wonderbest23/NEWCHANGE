@@ -38,7 +38,43 @@ function getRecognition(): SR | null {
 
 // OpenAI TTS 재생 — 브라우저 SpeechSynthesis 대신 자연스러운 한국어 음성 사용
 let currentAudio: HTMLAudioElement | null = null;
+let sharedAudio: HTMLAudioElement | null = null;
 const ttsCache = new Map<string, string>(); // text -> object URL
+
+function getSharedAudio() {
+  if (typeof document === "undefined") return null;
+  if (!sharedAudio) {
+    sharedAudio = document.createElement("audio");
+    sharedAudio.playsInline = true;
+    sharedAudio.preload = "auto";
+    sharedAudio.style.position = "fixed";
+    sharedAudio.style.width = "1px";
+    sharedAudio.style.height = "1px";
+    sharedAudio.style.opacity = "0";
+    sharedAudio.style.pointerEvents = "none";
+    sharedAudio.style.left = "-9999px";
+    document.body.appendChild(sharedAudio);
+  }
+  sharedAudio.muted = false;
+  sharedAudio.volume = 1;
+  return sharedAudio;
+}
+
+function speakWithBrowserVoice(text: string, opts?: { onEnd?: () => void; onStart?: () => void }) {
+  if (typeof window === "undefined" || !window.speechSynthesis) {
+    opts?.onEnd?.();
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "ko-KR";
+  utterance.rate = 0.92;
+  utterance.pitch = 1;
+  utterance.onstart = () => opts?.onStart?.();
+  utterance.onend = () => opts?.onEnd?.();
+  utterance.onerror = () => opts?.onEnd?.();
+  window.speechSynthesis.speak(utterance);
+}
 
 function stopSpeak() {
   if (currentAudio) {
@@ -77,8 +113,10 @@ async function speak(
       url = URL.createObjectURL(blob);
       ttsCache.set(text, url);
     }
-    const audio = new Audio(url);
+    const audio = getSharedAudio() ?? new Audio();
     currentAudio = audio;
+    audio.src = url;
+    audio.load();
     audio.onplay = () => opts?.onStart?.();
     audio.onended = () => {
       if (currentAudio === audio) currentAudio = null;
@@ -92,6 +130,13 @@ async function speak(
     await audio.play();
   } catch (e) {
     console.error("[tts] play failed", e);
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      speakWithBrowserVoice(text, {
+        onStart: opts?.onStart,
+        onEnd: opts?.onEnd,
+      });
+      return;
+    }
     opts?.onError?.(e);
     opts?.onEnd?.();
   }
