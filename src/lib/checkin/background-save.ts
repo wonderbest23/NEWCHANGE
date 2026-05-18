@@ -9,12 +9,19 @@ import { analyzeAndSaveCheckin } from "@/lib/checkin/checkin-actions";
 import { getSessionCached } from "@/lib/auth/session-cache";
 
 const STORAGE_KEY = "gyeot:pending-checkin-save";
+const DRAFT_STORAGE_KEY = "gyeot:draft-checkin-call";
 export const CHECKIN_SAVED_EVENT = "checkin-saved";
 
 type Payload = {
   transcript: { role: "user" | "ai"; text: string }[];
   durationSec: number;
   shareWithGuardian: boolean;
+};
+
+export type CheckinCallDraft = Payload & {
+  savedAt: number;
+  startedAt?: number | null;
+  reason?: "hidden" | "pagehide" | "disconnect" | "unmount" | "manual";
 };
 
 let inflight: Promise<unknown> | null = null;
@@ -88,4 +95,45 @@ export function resumePendingCheckinSave() {
 
 export function isCheckinSaving() {
   return inflight !== null;
+}
+
+export function saveCheckinCallDraft(payload: Omit<CheckinCallDraft, "savedAt">) {
+  if (typeof window === "undefined") return;
+  const cleanTranscript = payload.transcript.filter((t) => t.text.trim().length > 0);
+  if (cleanTranscript.length === 0) return;
+  const draft: CheckinCallDraft = {
+    ...payload,
+    transcript: cleanTranscript,
+    savedAt: Date.now(),
+  };
+  try {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {}
+}
+
+export function loadCheckinCallDraft(): CheckinCallDraft | null {
+  if (typeof window === "undefined") return null;
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(DRAFT_STORAGE_KEY); } catch { return null; }
+  if (!raw) return null;
+  try {
+    const draft = JSON.parse(raw) as CheckinCallDraft;
+    if (!Array.isArray(draft.transcript) || draft.transcript.length === 0) {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      return null;
+    }
+    if (Date.now() - draft.savedAt > 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      return null;
+    }
+    return draft;
+  } catch {
+    try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
+    return null;
+  }
+}
+
+export function clearCheckinCallDraft() {
+  if (typeof window === "undefined") return;
+  try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
 }

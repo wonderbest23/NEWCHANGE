@@ -1,24 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { Mic, MicOff, PhoneOff, Phone, Sparkles, Loader2, Moon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Mic, MicOff, PhoneOff, Phone, Sparkles, Loader2, Moon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createRealtimeSession } from "@/lib/voice-test-actions";
 import { analyzeAndSaveCheckin } from "@/lib/checkin/checkin-actions";
-import { queueCheckinSave, CHECKIN_SAVED_EVENT } from "@/lib/checkin/background-save";
+import {
+  queueCheckinSave,
+  CHECKIN_SAVED_EVENT,
+  clearCheckinCallDraft,
+  loadCheckinCallDraft,
+  saveCheckinCallDraft,
+  type CheckinCallDraft,
+} from "@/lib/checkin/background-save";
 import { trackEvent } from "@/lib/analytics/trackEvent";
 import { ANALYTICS_EVENTS } from "@/lib/analytics/eventNames";
-import {
-  resolveEmotion,
-  getDailyMixedRecommendations,
-  REC_PRIORITY_LABEL,
-  resolveAlert,
-  ALERT_LEVEL_LABEL,
-  type EmotionRecommendation,
-} from "@/lib/checkin/emotion";
-import { getDailyEmotionRecommendations } from "@/lib/checkin/emotion-rec-actions";
-import { BookOpen, Quote, Wind, MapPin as MapPinIcon, Music, Newspaper, Sparkles as SparklesIcon } from "lucide-react";
+import { resolveEmotion } from "@/lib/checkin/emotion";
 
 type Transcript = { role: "user" | "ai"; text: string; ts: number; partial?: boolean };
 type Status = "idle" | "connecting" | "live" | "ended" | "analyzing";
@@ -47,6 +45,7 @@ export function DailyVoiceCheckin({
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
+  const [draft, setDraft] = useState<CheckinCallDraft | null>(null);
   const startedAtRef = useRef<number | null>(null);
   const autoEndTriggeredRef = useRef(false);
 
@@ -62,10 +61,11 @@ export function DailyVoiceCheckin({
   const statusRef = useRef<Status>("idle");
 
   // 음성 안정화용 refs
-  // - AI가 말하는 동안 사용자 transcript 무시 (스피커 → 마이크 재입력 차단)
+  // - AI 발화 직후 짧은 잔향만 거르고, 사용자 답변은 최대한 보존
   // - 같은 transcript가 짧은 간격으로 중복되면 무시
   // - 응답 생성 중복 락
   const isAssistantSpeakingRef = useRef(false);
+  const lastAssistantAudioAtRef = useRef(0);
   const isProcessingTurnRef = useRef(false);
   const lastUserTranscriptRef = useRef("");
   const lastUserTranscriptAtRef = useRef(0);
@@ -77,10 +77,51 @@ export function DailyVoiceCheckin({
     });
   };
 
+  const saveDraftFromCurrentState = (
+    reason: NonNullable<CheckinCallDraft["reason"]>,
+    source = transcriptsRef.current,
+  ) => {
+    const clean = source.filter((t) => t.text.trim().length > 0 && !t.partial);
+    if (clean.length === 0) return;
+    const durationSec = startedAtRef.current
+      ? Math.round((Date.now() - startedAtRef.current) / 1000)
+      : draft?.durationSec ?? 0;
+    saveCheckinCallDraft({
+      transcript: clean.map((t) => ({ role: t.role, text: t.text })),
+      durationSec,
+      shareWithGuardian: true,
+      startedAt: startedAtRef.current,
+      reason,
+    });
+    setDraft(loadCheckinCallDraft());
+  };
+
+  const pauseCall = (
+    reason: NonNullable<CheckinCallDraft["reason"]>,
+    message = "통화를 일시저장했어요. 돌아오면 이어서 할 수 있어요.",
+  ) => {
+    autoEndTriggeredRef.current = true;
+    saveDraftFromCurrentState(reason);
+    cleanup();
+    setStatus("idle");
+    toast(message);
+  };
+
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [transcripts]);
+
+  useEffect(() => {
+    const saved = loadCheckinCallDraft();
+    if (!saved) return;
+    setDraft(saved);
+    setTranscripts(saved.transcript.map((t, i) => ({
+      ...t,
+      ts: saved.savedAt + i,
+    })));
+    startedAtRef.current = saved.startedAt ?? Date.now() - saved.durationSec * 1000;
+  }, []);
 
   // 통화 시작 시 카드를 화면 상단으로 스크롤 (모바일에서 통화 화면이 잘 보이도록)
   useEffect(() => {
@@ -104,36 +145,32 @@ export function DailyVoiceCheckin({
     };
   }, [status]);
 
-  // 언마운트(페이지 이동/카드 사라짐) 시: 통화 중이었다면 자동으로 백그라운드 저장
+  // 언마운트(페이지 이동/카드 사라짐) 시: 통화 중이었다면 최종 분석 대신 일시저장
   useEffect(() => {
     return () => {
       const wasActive = statusRef.current === "live" || statusRef.current === "connecting";
       cleanup();
       if (!wasActive) return;
-      const finalTranscripts = transcriptsRef.current.filter((t) => t.text.trim().length > 0);
-      if (finalTranscripts.length < 2) return;
-      const durationSec = startedAtRef.current
-        ? Math.round((Date.now() - startedAtRef.current) / 1000)
-        : 0;
-      // background-save 모듈은 컴포넌트와 무관하게 동작 — 저장 진행은 sonner toast로 안내됨
-      queueCheckinSave({
-        transcript: finalTranscripts.map((t) => ({ role: t.role, text: t.text })),
-        durationSec,
-        shareWithGuardian: true,
-      }).catch(() => {});
+      saveDraftFromCurrentState("unmount");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 통화 중에 탭 닫기/새로고침 시도하면 경고 — 사용자가 의도하지 않은 종료를 막는다
+  // 통화 도중 앱이 숨겨지거나 페이지가 닫히면 분석 완료가 아니라 일시저장한다.
   useEffect(() => {
     if (status !== "live" && status !== "connecting") return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        saveDraftFromCurrentState("hidden");
+      }
     };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
+    const handlePageHide = () => saveDraftFromCurrentState("pagehide");
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", handlePageHide);
+    };
   }, [status]);
 
   const cleanup = () => {
@@ -145,40 +182,60 @@ export function DailyVoiceCheckin({
     pcRef.current = null;
   };
 
+  const isMeaningfulUserText = (text: string) => {
+    const cleaned = text.replace(/[.,!?…~\s]/g, "");
+    if (!cleaned) return false;
+    // "네", "응" 같은 한국어 짧은 답변은 실제 답변이므로 버리면 안 된다.
+    if (/[가-힣ㄱ-ㅎㅏ-ㅣ0-9]/.test(cleaned)) return true;
+    return cleaned.length >= 2;
+  };
+
+  const appendUserTranscript = (text: string) => {
+    const now = Date.now();
+    if (
+      text === lastUserTranscriptRef.current &&
+      now - lastUserTranscriptAtRef.current < 3000
+    ) {
+      return;
+    }
+    lastUserTranscriptRef.current = text;
+    lastUserTranscriptAtRef.current = now;
+    setTranscripts((prev) => [...prev, { role: "user", text, ts: now }]);
+  };
+
+  const handleUserTranscript = (msg: any) => {
+    const text = ((msg.transcript ?? msg.text ?? msg.delta ?? "") as string).trim();
+    if (!text) return;
+
+    // AI 음성이 막 끝난 직후 아주 짧은 잔향만 무시.
+    // 실제 답변까지 버리면 서버/모바일 환경에서 기록 누락이 생긴다.
+    if (isAssistantSpeakingRef.current && Date.now() - lastAssistantAudioAtRef.current < 180) return;
+
+    if (!isMeaningfulUserText(text)) return;
+
+    appendUserTranscript(text);
+
+    // 사용자 음성 종료 의사 감지
+    if (/그만|끊어|끊을|종료|안녕히\s*계세요|이만/.test(text) && !autoEndTriggeredRef.current) {
+      autoEndTriggeredRef.current = true;
+      setTimeout(() => endCallRef.current(), 1500);
+    }
+  };
+
   const handleEvent = (msg: any) => {
     const t = msg.type as string;
-    if (t === "conversation.item.input_audio_transcription.completed") {
-      const text = (msg.transcript || "").trim();
-      if (!text) return;
-
-      // 1) AI가 말하는 동안 들어온 transcript는 스피커 재입력일 가능성이 높음 → 무시
-      if (isAssistantSpeakingRef.current) return;
-
-      // 2) 너무 짧은 발화 무시 (잡음일 가능성)
-      if (text.length < 2) return;
-
-      // 3) 같은 transcript가 3초 이내 반복되면 무시
-      const now = Date.now();
-      if (
-        text === lastUserTranscriptRef.current &&
-        now - lastUserTranscriptAtRef.current < 3000
-      ) {
-        return;
-      }
-      lastUserTranscriptRef.current = text;
-      lastUserTranscriptAtRef.current = now;
-
-      setTranscripts((prev) => [...prev, { role: "user", text, ts: Date.now() }]);
-      // 사용자 음성 종료 의사 감지
-      if (/그만|끊어|끊을|종료|안녕히\s*계세요|이만/.test(text) && !autoEndTriggeredRef.current) {
-        autoEndTriggeredRef.current = true;
-        setTimeout(() => endCallRef.current(), 1500);
-      }
+    if (
+      t === "conversation.item.input_audio_transcription.completed" ||
+      t === "conversation.item.input_audio_transcription.done" ||
+      t === "input_audio_transcription.completed"
+    ) {
+      handleUserTranscript(msg);
     } else if (t === "response.created") {
       isProcessingTurnRef.current = true;
     } else if (t === "response.audio.delta" || t === "response.audio_transcript.delta") {
       // AI 음성 출력 시작/진행 중
       isAssistantSpeakingRef.current = true;
+      lastAssistantAudioAtRef.current = Date.now();
       if (assistantSilenceTimerRef.current) {
         clearTimeout(assistantSilenceTimerRef.current);
         assistantSilenceTimerRef.current = null;
@@ -209,13 +266,13 @@ export function DailyVoiceCheckin({
         setTimeout(() => endCallRef.current(), 2500);
       }
     } else if (t === "response.done" || t === "response.audio.done") {
-      // AI 발화가 완전히 끝나면 약간의 여유 후 입력 다시 허용
-      // (스피커 잔향이 마이크로 들어가는 것을 막기 위해 700ms 버퍼)
+      // AI 발화가 완전히 끝나면 짧은 여유 후 입력 다시 허용
+      // (길게 막으면 사용자의 빠른 답변이 전사에서 누락된다)
       if (assistantSilenceTimerRef.current) clearTimeout(assistantSilenceTimerRef.current);
       assistantSilenceTimerRef.current = setTimeout(() => {
         isAssistantSpeakingRef.current = false;
         isProcessingTurnRef.current = false;
-      }, 700);
+      }, 220);
     } else if (t === "error") {
       const errMsg = (msg.error?.message ?? "") as string;
       // OpenAI Realtime 의 경쟁 상태(race) 에러 — 첫 응답은 정상 진행 중이고
@@ -229,17 +286,33 @@ export function DailyVoiceCheckin({
     }
   };
 
+  const buildResumeContext = () => {
+    if (!draft || transcripts.length === 0) return "";
+    const recent = transcripts
+      .filter((t) => t.text.trim().length > 0)
+      .slice(-10)
+      .map((t) => `${t.role === "ai" ? "AI" : "사용자"}: ${t.text}`)
+      .join("\n");
+    if (!recent) return "";
+    return [
+      "이전 안부 통화가 중간에 끊겨 이어서 진행합니다.",
+      "아래 대화를 반복해서 다시 묻지 말고, 빠진 항목만 자연스럽게 이어서 확인하세요.",
+      recent,
+    ].join("\n");
+  };
+
   const startCall = async () => {
     if (alreadyDoneToday) {
       toast("오늘은 이미 안부 통화를 완료했어요. 내일 다시 만나요.");
       return;
     }
     setError(null);
-    setTranscripts([]);
+    const resumeContext = buildResumeContext();
+    if (!draft) setTranscripts([]);
     setResult(null);
     setStatus("connecting");
     autoEndTriggeredRef.current = false;
-    startedAtRef.current = Date.now();
+    startedAtRef.current = draft?.startedAt ?? Date.now();
     void trackEvent({
       eventName: ANALYTICS_EVENTS.VOICE_CHECK_STARTED,
       userRole: "senior",
@@ -249,7 +322,10 @@ export function DailyVoiceCheckin({
       const session = await createRealtimeSession({
         data: {
           personaName: nickname,
-          personaContext: "오늘의 안부 통화 — 컨디션, 식사, 약, 기분을 부드럽게 여쭤봐 주세요.",
+          personaContext: [
+            "오늘의 안부 통화 — 컨디션, 식사, 약, 기분을 부드럽게 여쭤봐 주세요.",
+            resumeContext,
+          ].filter(Boolean).join("\n\n"),
         },
       });
       if (!session.client_secret) throw new Error("연결 토큰 발급 실패");
@@ -277,8 +353,9 @@ export function DailyVoiceCheckin({
             (statusRef.current === "live" || statusRef.current === "connecting")) {
           if (autoEndTriggeredRef.current) return;
           autoEndTriggeredRef.current = true;
-          toast("연결이 끊어졌어요. 지금까지 대화를 자동으로 저장할게요.");
-          setTimeout(() => endCallRef.current(), 300);
+          setTimeout(() => {
+            pauseCall("disconnect", "연결이 끊어졌어요. 지금까지 대화를 일시저장했어요.");
+          }, 300);
         }
       };
 
@@ -318,7 +395,7 @@ export function DailyVoiceCheckin({
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
       setStatus("live");
-      toast.success("연결되었어요. 편하게 이야기해 주세요.");
+      toast.success(draft ? "이어서 연결됐어요. 편하게 계속 이야기해 주세요." : "연결되었어요. 편하게 이야기해 주세요.");
     } catch (e: any) {
       console.error(e);
       setError(e.message || String(e));
@@ -329,6 +406,7 @@ export function DailyVoiceCheckin({
   };
 
   const endCall = () => {
+    autoEndTriggeredRef.current = true;
     cleanup();
     const finalTranscripts = transcripts.filter((t) => t.text.trim().length > 0);
     const durationSec = startedAtRef.current
@@ -336,13 +414,15 @@ export function DailyVoiceCheckin({
       : 0;
 
     if (finalTranscripts.length < 2) {
+      clearCheckinCallDraft();
+      setDraft(null);
       setStatus("ended");
       toast("통화가 너무 짧아 분석은 생략했어요.");
       return;
     }
 
-    // 통화 즉시 종료 — 저장은 백그라운드에서. 사용자는 다른 페이지로 자유롭게 이동 가능.
-    setStatus("ended");
+    // 분석 결과가 준비되는 동안 전문적인 진행 상태를 보여준다.
+    setStatus("analyzing");
 
     queueCheckinSave({
       transcript: finalTranscripts.map((t) => ({ role: t.role, text: t.text })),
@@ -351,7 +431,10 @@ export function DailyVoiceCheckin({
     })
       .then((r) => {
         const res = r as AnalyzeResult;
+        clearCheckinCallDraft();
+        setDraft(null);
         setResult(res);
+        setStatus("ended");
         onAnalyzed?.(res);
         void trackEvent({
           eventName: ANALYTICS_EVENTS.VOICE_CHECK_COMPLETED,
@@ -379,6 +462,9 @@ export function DailyVoiceCheckin({
       })
       .catch((e) => {
         console.error("[checkin] analyze failed", e);
+        saveDraftFromCurrentState("manual", finalTranscripts);
+        setStatus("idle");
+        toast.error("저장에 실패해서 통화를 일시저장했어요. 잠시 후 이어서 저장할 수 있어요.");
         void trackEvent({
           eventName: ANALYTICS_EVENTS.VOICE_CHECK_FAILED,
           userRole: "senior",
@@ -408,6 +494,14 @@ export function DailyVoiceCheckin({
     setMuted(!track.enabled);
   };
 
+  const discardDraft = () => {
+    clearCheckinCallDraft();
+    setDraft(null);
+    setTranscripts([]);
+    startedAtRef.current = null;
+    toast("일시저장된 통화를 지웠어요.");
+  };
+
   // 최신 endCall 함수를 ref에 동기화 (자동 종료 타이머에서 사용)
   useEffect(() => {
     endCallRef.current = endCall;
@@ -418,7 +512,7 @@ export function DailyVoiceCheckin({
   // 오늘 이미 완료 (서버에서 내려온 값) 또는 방금 통화 완료 후 분석까지 끝난 경우
   const showCompleted = alreadyDoneToday || status === "ended";
 
-  // ✅ 오늘 통화 완료 — 감정 그라데이션 카드
+  // ✅ 오늘 통화 완료 — 분석 완료 리빌 카드
   if (showCompleted && status !== "analyzing") {
     const condition = result?.checkin?.condition_level ?? todayCondition ?? "normal";
     const moodRaw = (result?.checkin as any)?.mood_status ?? todayMood ?? null;
@@ -439,14 +533,20 @@ export function DailyVoiceCheckin({
     return (
       <div
         ref={cardRef}
-        className="relative overflow-hidden rounded-[2rem] border-2 border-border/60 bg-background p-6 shadow-soft sm:p-8"
+        className="relative overflow-hidden rounded-[2rem] border border-border/70 bg-background p-6 shadow-soft sm:p-8"
         role="status"
         aria-live="polite"
       >
-        <div className="flex flex-col items-center gap-5 text-center">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary via-amber-warm to-sage animate-result-sheen" aria-hidden />
+        <div className="flex flex-col items-center gap-5 text-center animate-result-pop">
+          <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-sm font-bold text-primary">
+            <Sparkles className="h-4 w-4" />
+            분석 완료
+          </span>
+
           {/* 미래형 감정 시계(Emotion Orb) */}
           <div
-            className="relative h-40 w-40 sm:h-48 sm:w-48"
+            className="relative h-36 w-36 sm:h-40 sm:w-40"
             aria-label={`오늘 감정: ${emotion.label}`}
             role="img"
           >
@@ -503,12 +603,12 @@ export function DailyVoiceCheckin({
             <div className="absolute inset-0" aria-hidden>
               <div
                 className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.95)] animate-emotion-orbit"
-                style={{ ["--orbit-r" as any]: "68px", animationDuration: orbitDur }}
+                style={{ ["--orbit-r" as any]: "58px", animationDuration: orbitDur }}
               />
               <div
                 className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/80 shadow-[0_0_8px_rgba(255,255,255,0.8)] animate-emotion-orbit"
                 style={{
-                  ["--orbit-r" as any]: "78px",
+                  ["--orbit-r" as any]: "66px",
                   animationDirection: "reverse",
                   animationDuration: orbitDur2,
                 }}
@@ -516,7 +616,7 @@ export function DailyVoiceCheckin({
             </div>
             {/* 중앙 이모지 + 라벨 */}
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
-              <span className="text-5xl drop-shadow-md sm:text-6xl" aria-hidden>
+              <span className="text-4xl drop-shadow-md sm:text-5xl" aria-hidden>
                 {emotion.emoji}
               </span>
               <span className="text-base font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)] sm:text-lg">
@@ -527,71 +627,12 @@ export function DailyVoiceCheckin({
 
           <div className="space-y-2 px-1">
             <p className="text-2xl font-bold leading-tight text-foreground sm:text-3xl">
-              오늘은 <span className={emotion.textTone}>{emotion.label}</span>
+              쨘, 오늘 기록이 정리됐어요
             </p>
-            <p className="text-lg leading-relaxed text-foreground/75">{emotion.caption}</p>
-            <p className="pt-1 text-base leading-relaxed text-foreground/55">
-              오늘 안부 통화를 잘 마쳤어요. 내일 다시 만나요.
+            <p className="text-lg leading-relaxed text-foreground/75">
+              오늘 상태는 <span className={cn("font-bold", emotion.textTone)}>{emotion.label}</span> 쪽으로 보여요.
             </p>
           </div>
-
-          {/* 알림 레벨 배지 — 보고서 §6 알림·보호자 통보 정책 */}
-          {(() => {
-            const alert = resolveAlert(emotion.key, condition);
-            const tone =
-              alert.level === "high"
-                ? "border-destructive/50 bg-destructive/10 text-destructive"
-                : alert.level === "mid"
-                  ? "border-amber-warm/50 bg-amber-warm/10 text-amber-warm"
-                  : "border-sage/40 bg-sage/10 text-sage";
-            const dot =
-              alert.level === "high"
-                ? "bg-destructive"
-                : alert.level === "mid"
-                  ? "bg-amber-warm"
-                  : "bg-sage";
-            return (
-              <div
-                className={cn(
-                  "w-full rounded-2xl border-2 p-5 text-left backdrop-blur",
-                  tone,
-                )}
-                role={alert.level === "high" ? "alert" : undefined}
-              >
-                <div className="flex items-center gap-2">
-                  <span className={cn("h-3 w-3 rounded-full", dot)} aria-hidden />
-                  <span className="text-sm font-bold uppercase tracking-[0.14em]">
-                    {ALERT_LEVEL_LABEL[alert.level]}
-                  </span>
-                </div>
-                <p className="mt-3 text-lg font-semibold leading-relaxed text-foreground">
-                  {alert.message}
-                </p>
-                {alert.notifyGuardian && (
-                  <p className="mt-2 text-base leading-relaxed text-foreground/65">
-                    이 신호는 가족(보호자)에게도 함께 공유돼요.
-                  </p>
-                )}
-                {alert.hotline && alert.hotline.length > 0 && (
-                  <div className="mt-4 flex flex-col gap-2.5">
-                    {alert.hotline.map((h) => (
-                      <a
-                        key={h.tel}
-                        href={`tel:${h.tel}`}
-                        className="btn-destructive w-full"
-                      >
-                        <Phone className="h-6 w-6" /> {h.label}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-
-          {/* 감정 기반 권고 — 좌우 스와이프 카드 (한 번에 1개) */}
-          <EmotionRecsCarousel emotionKey={emotion.key} />
 
           <NextCallNotice />
 
@@ -807,14 +848,31 @@ export function DailyVoiceCheckin({
 
         <div className="text-center space-y-1.5">
           <p className="text-xl font-bold text-foreground">
-            {status === "idle" && "버튼을 눌러 통화를 시작해요"}
+            {status === "idle" && (draft ? "이전 통화를 이어서 할 수 있어요" : "버튼을 눌러 통화를 시작해요")}
             {status === "connecting" && "AI와 연결하고 있어요…"}
             {status === "analyzing" && "통화 내용을 정리하고 있어요…"}
           </p>
-          {status === "idle" && (
+          {status === "idle" && !draft && (
             <p className="text-sm text-foreground/50">
               매일 한 번, 건강과 기분을 확인해드려요
             </p>
+          )}
+          {status === "idle" && draft && (
+            <div className="mx-auto mt-3 max-w-sm rounded-2xl border border-primary/20 bg-background/85 p-4 shadow-soft">
+              <p className="text-sm font-bold text-primary">
+                {draft.transcript.length}개 대화가 일시저장되어 있어요
+              </p>
+              <p className="mt-1 text-xs text-foreground/55">
+                통화 버튼을 누르면 이어서 질문해드려요.
+              </p>
+              <button
+                type="button"
+                onClick={discardDraft}
+                className="mt-3 text-xs font-semibold text-foreground/55 underline underline-offset-4"
+              >
+                처음부터 다시 하기
+              </button>
+            </div>
           )}
           {status === "connecting" && (
             <p className="text-sm text-foreground/50">
@@ -824,11 +882,7 @@ export function DailyVoiceCheckin({
         </div>
       </div>
 
-      {status === "analyzing" && (
-        <div className="mt-6 flex items-center justify-center gap-2 rounded-2xl bg-background/70 p-4 text-base text-foreground/70 backdrop-blur">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" /> 분석 중…
-        </div>
-      )}
+      {status === "analyzing" && <AnalysisProgress />}
 
       {error && (
         <div className="mt-5 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
@@ -843,7 +897,7 @@ export function DailyVoiceCheckin({
 
 /**
  * 다음 통화 가능 시각 안내 (KST 기준 자정 = 다음 날 00:00).
- * 어르신이 헷갈리지 않도록 "내일 새벽 0시 (n시간 m분 후)" 형식으로 명확히 표시.
+ * 완료 화면에서는 긴 문장 대신 작고 가벼운 게이지 칩으로만 보여준다.
  */
 function NextCallNotice() {
   const [now, setNow] = useState(() => new Date());
@@ -867,6 +921,7 @@ function NextCallNotice() {
     hours > 0
       ? `${hours}시간 ${minutes}분 후`
       : `${minutes}분 후`;
+  const progress = Math.min(100, Math.max(0, (diffMs / 86_400_000) * 100));
 
   // 사용자 표시용 날짜 (한국어, KST)
   const tomorrowLabel = nextMidnightKst.toLocaleDateString("ko-KR", {
@@ -877,284 +932,55 @@ function NextCallNotice() {
   });
 
   return (
-    <div className="flex w-full flex-col items-center gap-2 rounded-2xl bg-background/80 px-4 py-4 text-foreground/80">
-      <div className="flex items-center gap-2 text-base">
-        <Moon className="h-5 w-5 text-primary" />
-        <span>
-          다음 통화는{" "}
-          <span className="font-semibold text-foreground">{tomorrowLabel} 새벽 0시</span>부터
+    <div
+      className="w-full"
+      aria-label={`다음 통화는 ${tomorrowLabel} 새벽 0시부터 가능합니다. ${remainText}에 다시 가능해요.`}
+      title={`다음 통화: ${tomorrowLabel} 새벽 0시`}
+    >
+      <div className="relative mx-auto flex min-h-12 w-full max-w-[320px] items-center justify-center overflow-hidden rounded-full border border-primary/20 bg-primary/10 px-4 text-primary shadow-sm">
+        <span
+          className="absolute inset-y-0 left-0 rounded-full bg-primary/15 transition-[width] duration-700 ease-out"
+          style={{ width: `${progress}%` }}
+        />
+        <span className="relative flex items-center gap-2 text-sm font-bold">
+          <Moon className="h-4 w-4" />
+          {remainText}에 다시 가능해요
         </span>
-      </div>
-      <div className="rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary">
-        {remainText}에 다시 가능해요
       </div>
     </div>
   );
 }
 
 
-// ───────────────────────── 감정 기반 권고 카루셀 ─────────────────────────
-const KIND_META: Record<
-  string,
-  { label: string; icon: typeof BookOpen; tone: string; tag: string }
-> = {
-  action: { label: "오늘 해볼 것", icon: SparklesIcon, tone: "from-rose-soft via-background to-amber-soft", tag: "bg-primary/10 text-primary" },
-  meditation: { label: "호흡·명상", icon: Wind, tone: "from-sky-50 via-background to-teal-50", tag: "bg-teal-100 text-teal-700" },
-  quote: { label: "오늘의 한마디", icon: Quote, tone: "from-amber-soft via-background to-rose-soft", tag: "bg-amber-warm/15 text-amber-warm" },
-  book: { label: "추천 도서", icon: BookOpen, tone: "from-orange-50 via-background to-amber-50", tag: "bg-orange-100 text-orange-700" },
-  place: { label: "가볼 만한 곳", icon: MapPinIcon, tone: "from-sage-soft via-background to-emerald-50", tag: "bg-sage/15 text-sage" },
-  music: { label: "음악 추천", icon: Music, tone: "from-violet-50 via-background to-rose-soft", tag: "bg-violet-100 text-violet-700" },
-  content: { label: "도움되는 정보", icon: Newspaper, tone: "from-slate-50 via-background to-sky-50", tag: "bg-slate-100 text-slate-700" },
-};
-
-function EmotionRecsCarousel({ emotionKey }: { emotionKey: string }) {
-  // 1) 정적 풀로 즉시 표시 (LCP 최적화)
-  // 2) 백그라운드에서 OpenAI 기반 일별 큐레이션을 받아오면 교체
-  const [recs, setRecs] = useState<EmotionRecommendation[]>(() =>
-    getDailyMixedRecommendations(emotionKey as any, 4),
-  );
-  const [active, setActive] = useState(0);
-  const [source, setSource] = useState<"cache" | "ai" | "fallback" | "static">("static");
-
-  useEffect(() => {
-    let cancelled = false;
-    setActive(0);
-    setRecs(getDailyMixedRecommendations(emotionKey as any, 4));
-    setSource("static");
-    (async () => {
-      try {
-        const res = await getDailyEmotionRecommendations({
-          data: { emotionKey: emotionKey as any },
-        });
-        if (cancelled) return;
-        if (res?.items?.length) {
-          setRecs(res.items);
-          setSource(res.source);
-        }
-      } catch (e) {
-        // 무시 — 정적 풀 그대로 사용
-        console.warn("[emotion-rec] fetch failed", e);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [emotionKey]);
-
-  if (recs.length === 0) return null;
-
-  const toneByPriority: Record<string, string> = {
-    now: "border-primary/40 bg-primary/10 text-primary",
-    soon: "border-amber-warm/50 bg-amber-warm/15 text-amber-warm",
-    keep: "border-sage/40 bg-sage/15 text-sage",
-  };
-
-  const r = recs[active];
-  const kind = (r.kind ?? "action") as keyof typeof KIND_META;
-  const km = KIND_META[kind] ?? KIND_META.action;
-  const KindIcon = km.icon;
+function AnalysisProgress() {
+  const steps = ["음성 정리", "상태 확인", "오늘 기록 준비"];
 
   return (
-    <div className="w-full rounded-2xl border-2 border-border/70 bg-background/70 p-5 text-left backdrop-blur">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-base font-semibold uppercase tracking-[0.12em] text-primary/80">
-          오늘의 맞춤 안내
-        </p>
-        {recs.length > 1 && (
-          <span className="text-sm font-medium tabular-nums text-foreground/45">
-            {active + 1} / {recs.length}
-          </span>
-        )}
-      </div>
-
-      {/* 카드 — 종류별 다른 비주얼 */}
-      <div className={cn(
-        "mt-4 flex flex-col gap-3 rounded-2xl border-2 border-border/60 bg-gradient-to-br p-5",
-        km.tone,
-      )}>
-        {/* 종류 + 우선순위 배지 */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={cn(
-            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold",
-            km.tag,
-          )}>
-            <KindIcon className="h-3.5 w-3.5" />
-            {km.label}
-          </span>
-          <span className={cn(
-            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold",
-            toneByPriority[r.priority] ?? toneByPriority.keep,
-          )}>
-            {REC_PRIORITY_LABEL[r.priority]}
-          </span>
+    <div className="mt-6 rounded-2xl border border-border/70 bg-background/85 p-5 text-foreground shadow-soft backdrop-blur animate-rise-in">
+      <div className="flex items-center gap-4">
+        <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+          <span className="absolute h-12 w-12 rounded-full border-2 border-primary/20" />
+          <span className="absolute h-12 w-12 rounded-full border-2 border-transparent border-t-primary animate-spin" />
+          <Sparkles className="h-6 w-6 text-primary animate-pulse" />
         </div>
-
-        {/* 본문 — 종류별 다른 레이아웃 */}
-        {kind === "quote" ? (
-          <RecQuoteBody r={r} />
-        ) : kind === "book" ? (
-          <RecBookBody r={r} />
-        ) : kind === "place" ? (
-          <RecPlaceBody r={r} />
-        ) : kind === "music" ? (
-          <RecMusicBody r={r} />
-        ) : kind === "meditation" ? (
-          <RecMeditationBody r={r} />
-        ) : (
-          <RecActionBody r={r} />
-        )}
-
-        {/* 외부 링크 */}
-        {r.link && (
-          <a
-            href={r.link}
-            target="_blank"
-            rel="noreferrer"
-            className="self-start text-sm font-semibold text-primary underline underline-offset-4 hover:text-primary/80"
-          >
-            자세히 보기 ↗
-          </a>
-        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-lg font-bold text-foreground">통화 내용을 분석하고 있어요</p>
+          <p className="mt-1 text-sm font-medium text-muted-foreground">
+            잠시 후 오늘 기록이 정리되어 나타나요
+          </p>
+        </div>
       </div>
-
-      {/* 이전 / 인디케이터 / 다음 */}
-      {recs.length > 1 && (
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={() => setActive((v) => Math.max(0, v - 1))}
-            disabled={active === 0}
-            aria-label="이전"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground/60 transition disabled:opacity-30 hover:bg-muted active:scale-95"
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </button>
-
-          {/* 인디케이터 도트 */}
-          <div className="flex items-center gap-1.5">
-            {recs.map((_, i) => (
-              <button
-                key={i}
-                type="button"
-                aria-label={`${i + 1}번째 안내로 이동`}
-                onClick={() => setActive(i)}
-                className={cn(
-                  "h-2 rounded-full transition-all",
-                  i === active ? "w-6 bg-primary" : "w-2 bg-foreground/25",
-                )}
-              />
-            ))}
+      <div className="mt-5 grid grid-cols-3 gap-2">
+        {steps.map((step, i) => (
+          <div key={step} className="rounded-xl bg-surface px-3 py-2 text-center">
+            <span
+              className="mx-auto mb-1 block h-1.5 rounded-full bg-primary/70 animate-analysis-step"
+              style={{ animationDelay: `${i * 0.35}s` }}
+            />
+            <span className="text-xs font-bold text-foreground/70">{step}</span>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setActive((v) => Math.min(recs.length - 1, v + 1))}
-            disabled={active === recs.length - 1}
-            aria-label="다음"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground/60 transition disabled:opacity-30 hover:bg-muted active:scale-95"
-          >
-            <ChevronRight className="h-5 w-5" />
-          </button>
-        </div>
-      )}
-
-      <p className="mt-4 text-xs leading-relaxed text-foreground/55 text-center">
-        ※ {source === "ai" || source === "cache"
-          ? "AI가 매일 새로 큐레이션해 드려요"
-          : "매일 새로운 안내로 바뀝니다"} · 의료 진단이 아니에요
-      </p>
-    </div>
-  );
-}
-
-/* ── 종류별 카드 본문 ───────────────────────────────────── */
-function RecActionBody({ r }: { r: EmotionRecommendation }) {
-  return (
-    <>
-      <p className="text-lg font-semibold leading-snug text-foreground sm:text-xl">{r.text}</p>
-      {r.hint && <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>}
-    </>
-  );
-}
-
-function RecMeditationBody({ r }: { r: EmotionRecommendation }) {
-  return (
-    <>
-      <p className="text-lg font-semibold leading-snug text-foreground sm:text-xl">{r.text}</p>
-      {r.hint && (
-        <p className="rounded-xl bg-background/60 p-3 text-base leading-relaxed text-foreground/75 backdrop-blur-sm">
-          🌬️ {r.hint}
-        </p>
-      )}
-    </>
-  );
-}
-
-function RecQuoteBody({ r }: { r: EmotionRecommendation }) {
-  return (
-    <>
-      <blockquote className="relative pl-6">
-        <span className="absolute left-0 top-0 select-none font-display text-4xl leading-none text-amber-warm/50">"</span>
-        <p className="font-display text-lg italic leading-relaxed text-foreground sm:text-xl">{r.text}</p>
-      </blockquote>
-      {r.author && (
-        <p className="text-sm font-medium text-foreground/55">— {r.author}</p>
-      )}
-      {r.hint && (
-        <p className="text-sm leading-relaxed text-foreground/60">{r.hint}</p>
-      )}
-    </>
-  );
-}
-
-function RecBookBody({ r }: { r: EmotionRecommendation }) {
-  return (
-    <div className="flex items-start gap-4">
-      {/* 책 아이콘 (이미지 대용) */}
-      <div className="flex h-20 w-14 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-orange-200 to-amber-300 shadow-md">
-        <BookOpen className="h-7 w-7 text-amber-800" />
-      </div>
-      <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-lg font-bold leading-snug text-foreground">{r.text}</p>
-        {r.author && (
-          <p className="text-sm font-medium text-foreground/65">{r.author}</p>
-        )}
-        {r.hint && (
-          <p className="mt-1 text-sm leading-relaxed text-foreground/65">{r.hint}</p>
-        )}
+        ))}
       </div>
     </div>
-  );
-}
-
-function RecPlaceBody({ r }: { r: EmotionRecommendation }) {
-  return (
-    <>
-      <div className="flex items-center gap-2">
-        <MapPinIcon className="h-5 w-5 text-sage" />
-        <p className="text-lg font-bold leading-snug text-foreground sm:text-xl">{r.text}</p>
-      </div>
-      {r.author && (
-        <p className="text-sm font-medium text-foreground/60">📍 {r.author}</p>
-      )}
-      {r.hint && (
-        <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>
-      )}
-    </>
-  );
-}
-
-function RecMusicBody({ r }: { r: EmotionRecommendation }) {
-  return (
-    <>
-      <div className="flex items-center gap-3">
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-200 text-violet-800">
-          <Music className="h-6 w-6" />
-        </span>
-        <p className="text-lg font-bold leading-snug text-foreground">{r.text}</p>
-      </div>
-      {r.hint && (
-        <p className="text-base leading-relaxed text-foreground/65">{r.hint}</p>
-      )}
-    </>
   );
 }

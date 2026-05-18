@@ -1,21 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth/mock-auth";
 import { useAppState } from "@/lib/auth/use-app-state";
 import { SeniorAppLayout } from "@/components/layouts/SeniorAppLayout";
 import { DailyVoiceCheckin } from "@/components/voice/DailyVoiceCheckin";
-import { Button } from "@/components/ui/button";
 import {
   ChevronRight,
   Loader2,
-  Send,
-  Sparkles,
-  MapPin,
   MessageCircleHeart,
   HeartPulse,
   Calendar,
   TrendingUp,
   RotateCcw,
+  Smile,
+  Utensils,
+  Pill,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTodayCheckin, useInvalidateTodayCheckin } from "@/lib/checkin/use-today-checkin";
@@ -85,7 +84,7 @@ function SeniorHome() {
   const navigate = useNavigate();
   const { data: today } = useTodayCheckin({ enabled: isAuthenticated });
   const invalidateToday = useInvalidateTodayCheckin();
-  const [tab, setTab] = useState<Tab>("today");
+  const [tab, setTab] = useState<Tab>("details");
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -210,40 +209,47 @@ function SeniorHome() {
       </section>
 
       {/* ─────────────────────────────────────────────────────────
-       * 3. 오늘의 한눈 보기 — 3컬럼 이모지 카드 (목업 스타일)
-       *    안부 완료 시: 실데이터 / 미완료 시: dash + 격려 메시지
+       * 3. 오늘의 한눈 보기
+       *    안부 완료 시: 실데이터 / 미완료 시: dash + 안내
        * ─────────────────────────────────────────────────────────*/}
       <section className="mt-6 animate-rise-in delay-150">
-        <div className="mb-3 flex items-baseline justify-between px-1">
-          <h2 className="font-display text-lg font-bold text-foreground">오늘의 한눈 보기</h2>
+        <div className="mb-3 flex items-end justify-between gap-3 px-1">
+          <div>
+            <h2 className="font-display text-lg font-bold text-foreground">오늘의 한눈 보기</h2>
+            <p className="mt-0.5 text-xs font-medium text-muted-foreground">통화에서 확인한 오늘 상태예요</p>
+          </div>
           {checkinDone && (
-            <span className={cn("inline-flex items-center gap-1 text-xs font-bold", cond.text)}>
+            <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full bg-background px-3 py-1 text-xs font-bold ring-1 ring-border/70", cond.text)}>
               <span className={cn("h-1.5 w-1.5 rounded-full", cond.dot)} />
-              컨디션 {cond.label}
+              {cond.label}
             </span>
           )}
         </div>
-        <div className="grid grid-cols-3 gap-2.5">
+        <div className="overflow-hidden rounded-2xl border border-border/70 bg-background">
           {[
-            { meta: mood, key: "기분" },
-            { meta: meal, key: "식사" },
-            { meta: medicine, key: "복약" },
-          ].map(({ meta, key }) => (
+            { meta: mood, key: "기분", icon: Smile },
+            { meta: meal, key: "식사", icon: Utensils },
+            { meta: medicine, key: "복약", icon: Pill },
+          ].map(({ meta, key, icon: Icon }, index) => (
             <div
               key={key}
               className={cn(
-                "relative overflow-hidden rounded-2xl border-2 border-border/40 px-3 py-4 text-center transition",
-                meta.color,
+                "flex min-h-[72px] items-center gap-3 px-4 py-3",
+                index > 0 && "border-t border-border/60",
               )}
             >
-              <span className="text-3xl">{meta.emoji}</span>
-              <p className="mt-1 text-[11px] font-semibold text-foreground/55">{key}</p>
-              <p className={cn("mt-0.5 text-sm font-bold", meta.text)}>{meta.label}</p>
+              <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", meta.color)}>
+                <Icon className={cn("h-5 w-5", meta.text)} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-muted-foreground">{key}</p>
+                <p className={cn("mt-0.5 text-base font-bold leading-snug", meta.text)}>{meta.label}</p>
+              </div>
             </div>
           ))}
         </div>
         {!checkinDone && (
-          <p className="mt-3 rounded-2xl bg-rose-soft/40 px-4 py-3 text-center text-sm font-medium text-foreground/70">
+          <p className="mt-3 rounded-2xl border border-border/60 bg-surface px-4 py-3 text-sm font-medium text-muted-foreground">
             안부 통화를 마치면 오늘의 한눈 보기가 채워져요
           </p>
         )}
@@ -254,14 +260,13 @@ function SeniorHome() {
        * ─────────────────────────────────────────────────────────*/}
       {checkinDone && report?.senior_report_text && (
         <section className="mt-5 animate-rise-in delay-200">
-          <div className="relative overflow-hidden rounded-3xl border-2 border-primary/20 bg-gradient-to-br from-rose-soft/60 via-background to-amber-soft/40 p-5 shadow-soft">
-            <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-primary/8 blur-2xl" aria-hidden />
-            <div className="relative flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-soft">
-                <Sparkles className="h-5 w-5" />
+          <div className="rounded-2xl border border-border/70 bg-background p-5 shadow-soft">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <MessageCircleHeart className="h-5 w-5" />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">AI 한 줄 요약</p>
+                <p className="text-xs font-bold text-primary">오늘의 요약</p>
                 <p className="mt-1.5 text-base leading-relaxed text-foreground">
                   {report.senior_report_text}
                 </p>
@@ -272,32 +277,21 @@ function SeniorHome() {
       )}
 
       {/* ─────────────────────────────────────────────────────────
-       * 5. 이번 주 흐름 — 미니 바 차트 (탭 클릭 시 week 탭으로)
+       * 5. 이번 주 기록 — 실제 주간 상세 탭으로 이동
        * ─────────────────────────────────────────────────────────*/}
       <button
         type="button"
         onClick={() => setTab("week")}
-        className="mt-5 flex w-full items-stretch gap-3 rounded-3xl border-2 border-border/60 bg-background p-4 text-left shadow-soft transition active:scale-[0.99] hover:border-primary/40 animate-rise-in delay-200"
+        className="mt-5 flex w-full items-center gap-3 rounded-2xl border border-border/70 bg-background p-4 text-left shadow-soft transition active:scale-[0.99] hover:border-primary/40 animate-rise-in delay-200"
       >
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-sage-soft">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sage-soft">
           <TrendingUp className="h-5 w-5 text-sage" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold text-foreground">이번 주 흐름</p>
-          <div className="mt-2 flex items-end gap-1 h-8">
-            {[65, 80, 55, 90, 75, 85, 70].map((h, i) => (
-              <div
-                key={i}
-                className="flex-1 rounded-t-sm bg-gradient-to-t from-primary/70 to-primary/25"
-                style={{ height: `${h}%` }}
-              />
-            ))}
-          </div>
-          <div className="mt-1 flex justify-between">
-            {["월", "화", "수", "목", "금", "토", "일"].map((d) => (
-              <span key={d} className="flex-1 text-center text-[10px] text-foreground/40">{d}</span>
-            ))}
-          </div>
+          <p className="text-sm font-bold text-foreground">이번 주 기록 보기</p>
+          <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">
+            최근 7일 안부 통화와 컨디션 기록을 모아서 확인해요
+          </p>
         </div>
         <ChevronRight className="self-center h-5 w-5 text-foreground/40" />
       </button>
@@ -307,16 +301,16 @@ function SeniorHome() {
        * ─────────────────────────────────────────────────────────*/}
       {recommendations.length > 0 && (
         <section className="mt-5 animate-rise-in delay-300">
-          <div className="rounded-3xl border-2 border-border/60 bg-background p-5 shadow-soft">
+          <div className="rounded-2xl border border-border/70 bg-background p-5 shadow-soft">
             <div className="flex items-baseline justify-between gap-3">
               <div className="flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-soft">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-soft/80">
                   <HeartPulse className="h-4 w-4 text-amber-warm" />
                 </span>
                 <p className="font-display text-base font-bold text-foreground">도움 받을 수 있는 곳</p>
               </div>
               {recommendations.length > 1 && (
-                <p className="text-xs font-medium text-foreground/45">좌우로 넘기기 →</p>
+                <p className="text-xs font-medium text-muted-foreground">좌우로 넘기기</p>
               )}
             </div>
             <div className="mt-3">
@@ -327,44 +321,7 @@ function SeniorHome() {
       )}
 
       {/* ─────────────────────────────────────────────────────────
-       * 7. 빠른 메뉴 — 4개 큰 타일 (시각적 메뉴)
-       * ─────────────────────────────────────────────────────────*/}
-      <section className="mt-5 animate-rise-in delay-300">
-        <h2 className="mb-3 px-1 font-display text-lg font-bold text-foreground">빠른 메뉴</h2>
-        <div className="grid grid-cols-2 gap-2.5">
-          <QuickTile
-            to="/local"
-            label="동네정보"
-            sub="복지관·행사"
-            icon={<MapPin className="h-6 w-6" />}
-            tone="from-rose-soft to-amber-soft text-primary"
-          />
-          <QuickTile
-            to="/community"
-            label="이야기방"
-            sub="이웃과 소통"
-            icon={<MessageCircleHeart className="h-6 w-6" />}
-            tone="from-sage-soft to-emerald-50 text-sage"
-          />
-          <QuickTile
-            to="/home/invite"
-            label="가족 초대"
-            sub="안부 함께 보기"
-            icon={<Send className="h-6 w-6" />}
-            tone="from-amber-soft to-rose-soft text-amber-warm"
-          />
-          <QuickTile
-            to="/home/me"
-            label="내 정보"
-            sub="설정 · 칭호"
-            icon={<HeartPulse className="h-6 w-6" />}
-            tone="from-primary/15 to-primary/5 text-primary"
-          />
-        </div>
-      </section>
-
-      {/* ─────────────────────────────────────────────────────────
-       * 8. 하단 — 자세히 보기 (이번 주 / 자세히 탭)
+       * 7. 하단 — 자세히 보기 (이번 주 / 자세히 탭)
        * ─────────────────────────────────────────────────────────*/}
       <section className="mt-8 animate-rise-in delay-300">
         <nav
@@ -430,43 +387,5 @@ function SeniorHome() {
         )}
       </section>
     </SeniorAppLayout>
-  );
-}
-
-/* ── 빠른 메뉴 타일 ───────────────────────────────────── */
-function QuickTile({
-  to,
-  label,
-  sub,
-  icon,
-  tone,
-}: {
-  to: string;
-  label: string;
-  sub: string;
-  icon: React.ReactNode;
-  tone: string;
-}) {
-  return (
-    <Link
-      to={to as "/local"}
-      className="group relative flex flex-col gap-3 overflow-hidden rounded-3xl border-2 border-border/60 bg-background p-4 shadow-soft transition active:scale-[0.98] hover:border-primary/40"
-    >
-      <span
-        className={cn(
-          "flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br shadow-soft",
-          tone,
-        )}
-      >
-        {icon}
-      </span>
-      <div>
-        <p className="font-display text-base font-bold text-foreground group-hover:text-primary">
-          {label}
-        </p>
-        <p className="mt-0.5 text-xs text-foreground/55">{sub}</p>
-      </div>
-      <ChevronRight className="absolute right-3 top-3 h-4 w-4 text-foreground/30" />
-    </Link>
   );
 }

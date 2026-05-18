@@ -46,7 +46,7 @@ export const createRealtimeSession = createServerFn({ method: "POST" })
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-realtime-preview",
+        model: "gpt-realtime-1.5",
         voice: DEFAULT_KOREAN_VOICE,
         modalities: ["audio", "text"],
         instructions,
@@ -58,11 +58,11 @@ export const createRealtimeSession = createServerFn({ method: "POST" })
         // - interrupt_response: false — AI 음성이 다시 마이크로 들어가 반복 응답되는 것 차단
         turn_detection: {
           type: "server_vad",
-          threshold: 0.75,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 900,
+          threshold: 0.55,
+          prefix_padding_ms: 250,
+          silence_duration_ms: 550,
           create_response: true,
-          interrupt_response: false,
+          interrupt_response: true,
         },
         // 휴대폰을 가까이 들고 통화 → near_field
         input_audio_noise_reduction: { type: "near_field" },

@@ -390,6 +390,28 @@
     0%   { transform: rotate(0deg) translateX(var(--orbit-r, 56px)) rotate(0deg); }
     100% { transform: rotate(360deg) translateX(var(--orbit-r, 56px)) rotate(-360deg); }
   }
+  @keyframes result-pop {
+    0%   { opacity: 0; transform: translateY(18px) scale(0.94); filter: blur(8px); }
+    65%  { opacity: 1; transform: translateY(-2px) scale(1.02); filter: blur(0); }
+    100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  }
+  @keyframes result-sheen {
+    0%   { transform: translateX(-100%); opacity: 0; }
+    30%  { opacity: 1; }
+    100% { transform: translateX(100%); opacity: 0.9; }
+  }
+  @keyframes analysis-step {
+    0%, 100% { opacity: 0.3; transform: scaleX(0.35); }
+    45%      { opacity: 1; transform: scaleX(1); }
+  }
+  @keyframes today-ring {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #0ea5e9 42%, transparent); }
+    50%      { box-shadow: 0 0 0 7px color-mix(in oklab, #0ea5e9 0%, transparent); }
+  }
+  @keyframes axis-slide {
+    0%   { opacity: 0; transform: translateY(24px); filter: blur(3px); }
+    100% { opacity: 1; transform: translateY(0); filter: blur(0); }
+  }
 
   .animate-emotion-spin     { animation: emotion-spin 18s linear infinite; }
   .animate-emotion-spin-rev { animation: emotion-spin-rev 26s linear infinite; }
@@ -397,6 +419,11 @@
   .animate-emotion-aura     { animation: emotion-aura 3.6s ease-in-out infinite; }
   .animate-emotion-arc      { animation: emotion-shimmer-arc 6s linear infinite; }
   .animate-emotion-orbit    { animation: emotion-orbit 9s linear infinite; }
+  .animate-result-pop       { animation: result-pop 0.75s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .animate-result-sheen     { animation: result-sheen 1.2s ease-out both; }
+  .animate-analysis-step    { animation: analysis-step 1.4s ease-in-out infinite; transform-origin: left center; }
+  .animate-today-ring       { animation: today-ring 1.55s ease-in-out infinite; }
+  .animate-axis-slide       { animation: axis-slide 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
   @media (prefers-reduced-motion: reduce) {
     .animate-emotion-spin,
@@ -404,7 +431,12 @@
     .animate-emotion-breathe,
     .animate-emotion-aura,
     .animate-emotion-arc,
-    .animate-emotion-orbit { animation: none !important; }
+    .animate-emotion-orbit,
+    .animate-result-pop,
+    .animate-result-sheen,
+    .animate-analysis-step,
+    .animate-today-ring,
+    .animate-axis-slide { animation: none !important; }
   }
 
   .animate-float        { animation: float-y 6s ease-in-out infinite; }

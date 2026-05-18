@@ -20,12 +20,14 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { verifyOpenAIWebhook } from "@/server/openai/verify.server";
 import { mapIncomingSipToSession } from "@/server/care/session-mapping.server";
 import { buildSystemPrompt } from "@/server/care/llm-prompt";
+import { DEFAULT_KOREAN_VOICE } from "@/lib/voice-profile";
+import { startRealtimeSideband } from "@/server/care/realtime-sideband.server";
 
 interface IncomingPayload {
   type?: string;
   data?: {
     call_id?: string;
-    sip_headers?: Record<string, string>;
+    sip_headers?: Record<string, string> | Array<{ name?: string; value?: string }>;
   };
 }
 
@@ -96,13 +98,22 @@ async function callOpenAIAccept(
 
   const body = {
     type: "realtime",
-    model: "gpt-realtime",
+    model: "gpt-realtime-1.5",
     instructions: buildSystemPrompt({ recipientName }),
-    voice: "alloy",
+    voice: DEFAULT_KOREAN_VOICE,
+    modalities: ["audio", "text"],
     input_audio_transcription: { model: "whisper-1", language: "ko" },
     tools: TOOL_DEFS,
     tool_choice: "auto",
-    turn_detection: { type: "server_vad", silence_duration_ms: 1000 },
+    turn_detection: {
+      type: "server_vad",
+      threshold: 0.55,
+      prefix_padding_ms: 250,
+      silence_duration_ms: 550,
+      create_response: true,
+      interrupt_response: true,
+    },
+    input_audio_noise_reduction: { type: "near_field" },
   };
 
   try {
@@ -127,6 +138,20 @@ async function callOpenAIAccept(
     console.error("[openai:session] accept network error", err);
     return { ok: false, error: String(err) };
   }
+}
+
+function normalizeSipHeaders(
+  raw: NonNullable<IncomingPayload["data"]>["sip_headers"],
+): Record<string, string> {
+  if (!raw) return {};
+  if (Array.isArray(raw)) {
+    const out: Record<string, string> = {};
+    for (const h of raw) {
+      if (h?.name && typeof h.value === "string") out[h.name] = h.value;
+    }
+    return out;
+  }
+  return raw;
 }
 
 export const Route = createFileRoute("/api/public/openai/session")({
@@ -160,7 +185,7 @@ export const Route = createFileRoute("/api/public/openai/session")({
         }
 
         const callId = payload.data?.call_id;
-        const sipHeaders = payload.data?.sip_headers ?? {};
+        const sipHeaders = normalizeSipHeaders(payload.data?.sip_headers);
 
         if (!callId) {
           console.warn("[openai:session] missing call_id");
@@ -200,6 +225,11 @@ export const Route = createFileRoute("/api/public/openai/session")({
         if (rec.data?.display_name) recipientName = rec.data.display_name;
 
         const accept = await callOpenAIAccept(callId, recipientName);
+        if (accept.ok) {
+          void startRealtimeSideband({ openaiCallId: callId, recipientName }).catch((e) => {
+            console.error("[openai:session] sideband failed", e);
+          });
+        }
         return Response.json({
           ok: accept.ok,
           matched_by: mapped.matchedBy,
