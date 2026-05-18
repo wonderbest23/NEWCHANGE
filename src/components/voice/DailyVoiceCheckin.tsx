@@ -70,6 +70,8 @@ export function DailyVoiceCheckin({
   const lastUserTranscriptRef = useRef("");
   const lastUserTranscriptAtRef = useRef(0);
   const assistantSilenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openingGreetingSentRef = useRef(false);
+  const remoteReadyRef = useRef(false);
 
   const setMicEnabled = (enabled: boolean) => {
     localStreamRef.current?.getAudioTracks().forEach((t) => {
@@ -177,6 +179,12 @@ export function DailyVoiceCheckin({
     try { dcRef.current?.close(); } catch {}
     try { localStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
     try { pcRef.current?.close(); } catch {}
+    try {
+      if (audioElRef.current) {
+        audioElRef.current.pause();
+        audioElRef.current.srcObject = null;
+      }
+    } catch {}
     dcRef.current = null;
     localStreamRef.current = null;
     pcRef.current = null;
@@ -232,7 +240,14 @@ export function DailyVoiceCheckin({
       handleUserTranscript(msg);
     } else if (t === "response.created") {
       isProcessingTurnRef.current = true;
-    } else if (t === "response.audio.delta" || t === "response.audio_transcript.delta") {
+    } else if (t === "session.created" || t === "session.updated") {
+      requestOpeningGreeting();
+    } else if (
+      t === "response.audio.delta" ||
+      t === "response.output_audio.delta" ||
+      t === "response.audio_transcript.delta" ||
+      t === "response.output_audio_transcript.delta"
+    ) {
       // AI 음성 출력 시작/진행 중
       isAssistantSpeakingRef.current = true;
       lastAssistantAudioAtRef.current = Date.now();
@@ -240,7 +255,7 @@ export function DailyVoiceCheckin({
         clearTimeout(assistantSilenceTimerRef.current);
         assistantSilenceTimerRef.current = null;
       }
-      if (t === "response.audio_transcript.delta") {
+      if (t === "response.audio_transcript.delta" || t === "response.output_audio_transcript.delta") {
         const delta = msg.delta || "";
         setTranscripts((prev) => {
           const last = prev[prev.length - 1];
@@ -250,7 +265,7 @@ export function DailyVoiceCheckin({
           return [...prev, { role: "ai", text: delta, ts: Date.now(), partial: true }];
         });
       }
-    } else if (t === "response.audio_transcript.done") {
+    } else if (t === "response.audio_transcript.done" || t === "response.output_audio_transcript.done") {
       const finalText = (msg.transcript || "") as string;
       setTranscripts((prev) => {
         const last = prev[prev.length - 1];
@@ -265,7 +280,7 @@ export function DailyVoiceCheckin({
         // 마지막 오디오 재생을 위해 약간 대기 후 종료
         setTimeout(() => endCallRef.current(), 2500);
       }
-    } else if (t === "response.done" || t === "response.audio.done") {
+    } else if (t === "response.done" || t === "response.audio.done" || t === "response.output_audio.done") {
       // AI 발화가 완전히 끝나면 짧은 여유 후 입력 다시 허용
       // (길게 막으면 사용자의 빠른 답변이 전사에서 누락된다)
       if (assistantSilenceTimerRef.current) clearTimeout(assistantSilenceTimerRef.current);
@@ -282,8 +297,42 @@ export function DailyVoiceCheckin({
         return;
       }
       isProcessingTurnRef.current = false;
+      console.error("[checkin-realtime] error", msg.error ?? msg);
       setError(errMsg || "통화 중 오류가 발생했어요");
     }
+  };
+
+  const requestOpeningGreeting = () => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open" || openingGreetingSentRef.current || !remoteReadyRef.current) return;
+    openingGreetingSentRef.current = true;
+    dc.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        instructions: "지금 먼저 따뜻하게 첫인사를 건네고, 오늘 식사는 하셨는지 한 문장으로 물어보세요.",
+      },
+    }));
+  };
+
+  const ensureRemoteAudioElement = () => {
+    if (typeof document === "undefined") return null;
+    if (!audioElRef.current) {
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.playsInline = true;
+      audio.preload = "auto";
+      audio.style.position = "fixed";
+      audio.style.left = "-9999px";
+      audio.style.width = "1px";
+      audio.style.height = "1px";
+      audio.style.opacity = "0";
+      audio.style.pointerEvents = "none";
+      document.body.appendChild(audio);
+      audioElRef.current = audio;
+    }
+    audioElRef.current.muted = false;
+    audioElRef.current.volume = 1;
+    return audioElRef.current;
   };
 
   const buildResumeContext = () => {
@@ -312,6 +361,8 @@ export function DailyVoiceCheckin({
     setResult(null);
     setStatus("connecting");
     autoEndTriggeredRef.current = false;
+    openingGreetingSentRef.current = false;
+    remoteReadyRef.current = false;
     startedAtRef.current = draft?.startedAt ?? Date.now();
     void trackEvent({
       eventName: ANALYTICS_EVENTS.VOICE_CHECK_STARTED,
@@ -345,6 +396,7 @@ export function DailyVoiceCheckin({
 
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
+      const remoteAudio = ensureRemoteAudioElement();
 
       // 네트워크 단절·서버측 종료 등으로 PeerConnection이 끊기면 자동 저장 흐름으로 진입
       pc.onconnectionstatechange = () => {
@@ -360,35 +412,36 @@ export function DailyVoiceCheckin({
       };
 
       pc.ontrack = (e) => {
-        if (audioElRef.current) {
-          audioElRef.current.srcObject = e.streams[0];
-          audioElRef.current.muted = false;
-          audioElRef.current.volume = 1;
-          audioElRef.current.play().catch((err) => {
+        const audio = remoteAudio ?? ensureRemoteAudioElement();
+        if (audio) {
+          audio.srcObject = e.streams[0];
+          audio.muted = false;
+          audio.volume = 1;
+          audio.play().catch((err) => {
             console.warn("[checkin-audio] playback blocked", err);
             setError("AI 목소리 재생이 차단됐어요. 휴대폰 무음 모드와 브라우저 권한을 확인해 주세요.");
           });
         }
       };
-      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+      localStream.getAudioTracks().forEach((track) => {
+        pc.addTransceiver(track, {
+          direction: "sendrecv",
+          streams: [localStream],
+        });
+      });
 
       const dc = pc.createDataChannel("oai-events");
       dcRef.current = dc;
       dc.onmessage = (ev) => {
         try { handleEvent(JSON.parse(ev.data)); } catch {}
       };
-      dc.onopen = () => {
-        dc.send(JSON.stringify({
-          type: "response.create",
-          response: { modalities: ["audio", "text"] },
-        }));
-      };
+      dc.onopen = () => requestOpeningGreeting();
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
       const sdpResponse = await fetch(
-        `https://api.openai.com/v1/realtime?model=${encodeURIComponent(session.model)}`,
+        "https://api.openai.com/v1/realtime/calls",
         {
           method: "POST",
           body: offer.sdp,
@@ -401,6 +454,8 @@ export function DailyVoiceCheckin({
       if (!sdpResponse.ok) throw new Error(`연결 실패 (${sdpResponse.status})`);
       const answerSdp = await sdpResponse.text();
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      remoteReadyRef.current = true;
+      requestOpeningGreeting();
 
       setStatus("live");
       toast.success(draft ? "이어서 연결됐어요. 편하게 계속 이야기해 주세요." : "연결되었어요. 편하게 이야기해 주세요.");
@@ -759,7 +814,6 @@ export function DailyVoiceCheckin({
             )}
           </footer>
 
-          <audio ref={audioElRef} autoPlay playsInline className="pointer-events-none absolute h-px w-px opacity-0" />
         </div>
       </>
     );
@@ -898,7 +952,6 @@ export function DailyVoiceCheckin({
         </div>
       )}
 
-      <audio ref={audioElRef} autoPlay playsInline className="pointer-events-none absolute h-px w-px opacity-0" />
     </div>
   );
 }

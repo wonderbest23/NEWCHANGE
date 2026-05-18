@@ -40,6 +40,8 @@ function VoiceTestPage() {
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const openingGreetingSentRef = useRef(false);
+  const remoteReadyRef = useRef(false);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -75,7 +77,9 @@ function VoiceTestPage() {
       const text = msg.transcript || "";
       if (!text.trim()) return;
       setTranscripts((prev) => [...prev, { role: "user", text, ts: Date.now() }]);
-    } else if (t === "response.audio_transcript.delta") {
+    } else if (t === "session.created" || t === "session.updated") {
+      requestOpeningGreeting();
+    } else if (t === "response.audio_transcript.delta" || t === "response.output_audio_transcript.delta") {
       // AI가 말하는 동안 자막 누적
       const delta = msg.delta || "";
       setTranscripts((prev) => {
@@ -85,7 +89,7 @@ function VoiceTestPage() {
         }
         return [...prev, { role: "ai", text: delta, ts: Date.now(), partial: true }];
       });
-    } else if (t === "response.audio_transcript.done") {
+    } else if (t === "response.audio_transcript.done" || t === "response.output_audio_transcript.done") {
       setTranscripts((prev) => {
         const last = prev[prev.length - 1];
         if (last && last.role === "ai" && last.partial) {
@@ -99,10 +103,26 @@ function VoiceTestPage() {
     }
   };
 
+  const requestOpeningGreeting = () => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open" || openingGreetingSentRef.current || !remoteReadyRef.current) return;
+    openingGreetingSentRef.current = true;
+    dc.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          instructions: "지금 먼저 따뜻하게 첫인사를 건네고, 오늘 식사는 하셨는지 한 문장으로 물어보세요.",
+        },
+      }),
+    );
+  };
+
   const startCall = async () => {
     setError(null);
     setTranscripts([]);
     setStatus("connecting");
+    openingGreetingSentRef.current = false;
+    remoteReadyRef.current = false;
 
     try {
       // 1) 서버에서 ephemeral key 발급
@@ -127,7 +147,12 @@ function VoiceTestPage() {
       };
 
       // 마이크 송신
-      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+      localStream.getAudioTracks().forEach((track) => {
+        pc.addTransceiver(track, {
+          direction: "sendrecv",
+          streams: [localStream],
+        });
+      });
 
       // 데이터채널: 이벤트(자막 등)
       const dc = pc.createDataChannel("oai-events");
@@ -139,22 +164,14 @@ function VoiceTestPage() {
           console.warn("dc parse fail", e);
         }
       };
-      dc.onopen = () => {
-        // 첫 인사를 AI가 시작하도록 트리거
-        dc.send(
-          JSON.stringify({
-            type: "response.create",
-            response: { modalities: ["audio", "text"] },
-          }),
-        );
-      };
+      dc.onopen = () => requestOpeningGreeting();
 
       // 4) SDP offer → OpenAI
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
       const sdpResponse = await fetch(
-        `https://api.openai.com/v1/realtime?model=${encodeURIComponent(session.model)}`,
+        "https://api.openai.com/v1/realtime/calls",
         {
           method: "POST",
           body: offer.sdp,
@@ -170,6 +187,8 @@ function VoiceTestPage() {
       }
       const answerSdp = await sdpResponse.text();
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      remoteReadyRef.current = true;
+      requestOpeningGreeting();
 
       setStatus("live");
       toast.success("연결되었습니다. 마이크에 대고 어르신처럼 응답해 보세요.");

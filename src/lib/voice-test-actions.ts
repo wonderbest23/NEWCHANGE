@@ -39,46 +39,54 @@ export const createRealtimeSession = createServerFn({ method: "POST" })
     });
 
     const { OPENAI_BASE_URL } = await import("@/lib/ai/openai-base");
-    const response = await fetch(`${OPENAI_BASE_URL}/realtime/sessions`, {
+    const realtimeModel = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-1.5";
+    const sessionConfig = {
+      session: {
+        type: "realtime",
+        model: realtimeModel,
+        output_modalities: ["audio"],
+        instructions,
+        audio: {
+          input: {
+            transcription: { model: "whisper-1", language: "ko" },
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.55,
+              prefix_padding_ms: 250,
+              silence_duration_ms: 550,
+              create_response: true,
+              interrupt_response: true,
+            },
+            noise_reduction: { type: "near_field" },
+          },
+          output: {
+            voice: DEFAULT_KOREAN_VOICE,
+          },
+        },
+      },
+    };
+
+    const response = await fetch(`${OPENAI_BASE_URL}/realtime/client_secrets`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: "gpt-realtime-1.5",
-        voice: DEFAULT_KOREAN_VOICE,
-        modalities: ["audio", "text"],
-        instructions,
-        temperature: 0.7,
-        input_audio_transcription: { model: "whisper-1", language: "ko" },
-        // 시니어 환경(보청기, TV, 가족 목소리) 보정:
-        // - threshold 높여 잡음 오인식 감소
-        // - silence_duration 길게 — 어르신은 말 중간에 쉼이 길다
-        // - interrupt_response: false — AI 음성이 다시 마이크로 들어가 반복 응답되는 것 차단
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.55,
-          prefix_padding_ms: 250,
-          silence_duration_ms: 550,
-          create_response: true,
-          interrupt_response: true,
-        },
-        // 휴대폰을 가까이 들고 통화 → near_field
-        input_audio_noise_reduction: { type: "near_field" },
-      }),
+      body: JSON.stringify(sessionConfig),
     });
 
     if (!response.ok) {
       const errText = await response.text();
       console.error("OpenAI realtime session error:", response.status, errText);
-      throw new Error(`Failed to create realtime session: ${response.status}`);
+      const detail = errText ? `: ${errText.slice(0, 500)}` : "";
+      throw new Error(`Failed to create realtime session: ${response.status}${detail}`);
     }
 
     const session = await response.json();
+    const clientSecret = session.value ?? session.client_secret?.value;
     return {
-      client_secret: session.client_secret?.value as string,
-      expires_at: session.client_secret?.expires_at as number,
-      model: session.model as string,
+      client_secret: clientSecret as string,
+      expires_at: (session.expires_at ?? session.client_secret?.expires_at) as number,
+      model: (session.session?.model ?? realtimeModel) as string,
     };
   });

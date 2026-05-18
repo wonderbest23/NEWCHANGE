@@ -98,22 +98,28 @@ async function callOpenAIAccept(
 
   const body = {
     type: "realtime",
-    model: "gpt-realtime-1.5",
+    model: process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-1.5",
+    output_modalities: ["audio"],
     instructions: buildSystemPrompt({ recipientName }),
-    voice: DEFAULT_KOREAN_VOICE,
-    modalities: ["audio", "text"],
-    input_audio_transcription: { model: "whisper-1", language: "ko" },
+    audio: {
+      input: {
+        transcription: { model: "whisper-1", language: "ko" },
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.55,
+          prefix_padding_ms: 250,
+          silence_duration_ms: 550,
+          create_response: true,
+          interrupt_response: true,
+        },
+        noise_reduction: { type: "near_field" },
+      },
+      output: {
+        voice: DEFAULT_KOREAN_VOICE,
+      },
+    },
     tools: TOOL_DEFS,
     tool_choice: "auto",
-    turn_detection: {
-      type: "server_vad",
-      threshold: 0.55,
-      prefix_padding_ms: 250,
-      silence_duration_ms: 550,
-      create_response: true,
-      interrupt_response: true,
-    },
-    input_audio_noise_reduction: { type: "near_field" },
   };
 
   try {

@@ -128,7 +128,6 @@ async function runToolAndRespond(
   sendJson(ws, {
     type: "response.create",
     response: {
-      modalities: ["audio", "text"],
       instructions: responseInstruction(result),
     },
   });
@@ -195,7 +194,6 @@ export async function startRealtimeSideband(opts: SidebandOptions): Promise<void
       sendJson(ws, {
         type: "response.create",
         response: {
-          modalities: ["audio", "text"],
           instructions: openingPrompt(opts.recipientName),
         },
       });
