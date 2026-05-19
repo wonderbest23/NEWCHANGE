@@ -78,29 +78,28 @@
   --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
 
-  /* Senior-mode fluid type — bigger across the board.
-     Body lands at ~18-20px on phones, ~22px on tablets+ for easy reading. */
-  --text-xs:   clamp(0.875rem,  0.83rem + 0.25vw, 0.9375rem);
+  /* Senior-mode fluid type — readable without making the whole app feel zoomed-in. */
+  --text-xs:   clamp(0.8125rem, 0.79rem + 0.16vw, 0.875rem);
   --text-xs--line-height: 1.55;
-  --text-sm:   clamp(1rem,      0.95rem + 0.30vw, 1.0625rem);
+  --text-sm:   clamp(0.9375rem, 0.90rem + 0.20vw, 1rem);
   --text-sm--line-height: 1.6;
-  --text-base: clamp(1.125rem,  1.05rem + 0.45vw, 1.25rem);
+  --text-base: clamp(1rem,      0.96rem + 0.26vw, 1.125rem);
   --text-base--line-height: 1.7;
-  --text-lg:   clamp(1.25rem,   1.15rem + 0.55vw, 1.4375rem);
+  --text-lg:   clamp(1.125rem,  1.06rem + 0.34vw, 1.25rem);
   --text-lg--line-height: 1.6;
-  --text-xl:   clamp(1.4375rem, 1.30rem + 0.70vw, 1.625rem);
+  --text-xl:   clamp(1.25rem,   1.16rem + 0.45vw, 1.4375rem);
   --text-xl--line-height: 1.5;
-  --text-2xl:  clamp(1.625rem,  1.45rem + 0.95vw, 1.9375rem);
+  --text-2xl:  clamp(1.4375rem, 1.30rem + 0.70vw, 1.625rem);
   --text-2xl--line-height: 1.35;
-  --text-3xl:  clamp(1.875rem,  1.60rem + 1.30vw, 2.375rem);
+  --text-3xl:  clamp(1.625rem,  1.42rem + 1.00vw, 2rem);
   --text-3xl--line-height: 1.25;
-  --text-4xl:  clamp(2.125rem,  1.75rem + 1.80vw, 2.875rem);
+  --text-4xl:  clamp(1.875rem,  1.56rem + 1.45vw, 2.5rem);
   --text-4xl--line-height: 1.15;
-  --text-5xl:  clamp(2.5rem,    1.90rem + 2.70vw, 3.75rem);
+  --text-5xl:  clamp(2.1875rem, 1.72rem + 2.20vw, 3.125rem);
   --text-5xl--line-height: 1.08;
-  --text-6xl:  clamp(2.875rem,  2.10rem + 3.60vw, 4.5rem);
+  --text-6xl:  clamp(2.5rem,    1.92rem + 2.90vw, 3.875rem);
   --text-6xl--line-height: 1.05;
-  --text-7xl:  clamp(3.25rem,   2.30rem + 4.80vw, 5.5rem);
+  --text-7xl:  clamp(2.875rem,  2.12rem + 3.80vw, 4.75rem);
   --text-7xl--line-height: 1.02;
 
   --shadow-soft: 0 1px 2px 0 oklch(0.2 0.02 30 / 0.04), 0 8px 24px -12px oklch(0.2 0.02 30 / 0.08);
@@ -245,8 +244,7 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    /* Senior mode root: 17px on tiny phones → 19px on tablet+. */
-    font-size: clamp(17px, 16px + 0.45vw, 19px);
+    font-size: clamp(16px, 15.5px + 0.22vw, 17px);
   }
 
   body {

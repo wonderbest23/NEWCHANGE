@@ -359,7 +359,7 @@ export function AskFab() {
       {/* 커뮤니티 페이지: 글쓰기 + 물어보기 하단 고정 액션바 */}
       {isCommunity && !callActive && (
         <div
-          className="fixed inset-x-0 z-50 flex gap-3 bg-background/95 px-5 py-3 backdrop-blur-xl border-t border-border/50"
+          className="fixed inset-x-0 z-50 flex gap-3 border-t border-border/50 bg-background/95 px-5 py-3 backdrop-blur-xl lg:absolute"
           style={{ bottom: "calc(env(safe-area-inset-bottom) + 82px)" }}
         >
           {isAuthenticated ? (
@@ -398,7 +398,7 @@ export function AskFab() {
           onClick={() => setOpen(true)}
           aria-label="무엇이든 물어보기"
           className={cn(
-            "fixed z-50 flex items-center gap-2 rounded-full bg-primary px-5 text-lg font-bold text-primary-foreground shadow-soft-lg transition-transform active:scale-95",
+            "fixed z-50 flex items-center gap-2 rounded-full bg-primary px-5 text-lg font-bold text-primary-foreground shadow-soft-lg transition-transform active:scale-95 lg:absolute",
             "h-16 min-w-[64px] pr-6",
           )}
           style={{
@@ -414,7 +414,7 @@ export function AskFab() {
       {/* 모달 */}
       {open && (
         <div
-          className="fixed inset-0 z-[60] flex items-end justify-center bg-black/55 sm:items-center"
+          className="fixed inset-0 z-[60] flex items-end justify-center bg-black/55 sm:items-center lg:absolute"
           onClick={(e) => {
             if (e.target === e.currentTarget) close();
           }}
