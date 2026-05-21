@@ -46,8 +46,8 @@ export function SeniorAppLayout({
   const initial = user?.nickname?.[0]?.toUpperCase() ?? "곁";
 
   return (
-    <div className="min-h-screen bg-warm-gradient lg:bg-[#f7f0ea] lg:px-8 xl:px-12">
-      <div className="mx-auto grid min-h-screen w-full lg:max-w-[1020px] lg:grid-cols-[minmax(0,500px)_430px] lg:items-stretch lg:justify-center lg:gap-8 xl:gap-10">
+    <div className="min-h-screen overflow-x-hidden bg-warm-gradient lg:bg-[#f7f0ea] lg:px-8 xl:px-12">
+      <div className="mx-auto grid min-h-screen w-full max-w-full overflow-x-hidden lg:max-w-[1020px] lg:grid-cols-[minmax(0,500px)_430px] lg:items-stretch lg:justify-center lg:gap-8 xl:gap-10">
         <aside className="hidden min-h-screen bg-background lg:flex lg:flex-col lg:justify-center lg:px-10 xl:px-12">
           <div className="max-w-[420px]">
             <Logo size="lg" />
@@ -112,9 +112,9 @@ export function SeniorAppLayout({
           </div>
         </aside>
 
-        <div className="relative mx-auto flex min-h-screen w-full flex-col bg-warm-gradient pb-32 lg:h-screen lg:min-h-0 lg:max-w-[430px] lg:overflow-hidden lg:border-x lg:border-border/45 lg:bg-background lg:pb-0 lg:shadow-[0_0_36px_rgba(65,45,32,0.14)]">
+        <div className="relative mx-auto flex min-h-screen w-full max-w-full flex-col overflow-x-hidden bg-warm-gradient pb-32 lg:h-screen lg:min-h-0 lg:max-w-[430px] lg:overflow-hidden lg:border-x lg:border-border/45 lg:bg-background lg:pb-0 lg:shadow-[0_0_36px_rgba(65,45,32,0.14)]">
           <header className="sticky top-0 z-40 shrink-0 border-b-2 border-border/70 bg-background/95 backdrop-blur-xl lg:static">
-            <div className="mx-auto flex h-[60px] w-full max-w-2xl items-center justify-between px-5">
+            <div className="mx-auto flex h-[60px] w-full max-w-full items-center justify-between px-5 lg:max-w-none">
               <Logo size="md" />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -165,7 +165,7 @@ export function SeniorAppLayout({
             </div>
           )}
 
-          <main className="mx-auto w-full max-w-2xl flex-1 px-5 pb-9 pt-5 lg:max-w-none lg:overflow-y-auto lg:pb-24">
+          <main className="mx-auto w-full max-w-full flex-1 overflow-x-hidden px-5 pb-9 pt-5 lg:max-w-none lg:overflow-y-auto lg:pb-24">
             {children}
           </main>
 
@@ -181,7 +181,7 @@ export function SeniorAppLayout({
             style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
             aria-label="주요 메뉴"
           >
-            <ul className="mx-auto grid max-w-xl grid-cols-4">
+            <ul className="mx-auto grid w-full max-w-full grid-cols-4 lg:max-w-none">
               {tabs.map((t) => {
                 const active =
                   t.to === "/home"
