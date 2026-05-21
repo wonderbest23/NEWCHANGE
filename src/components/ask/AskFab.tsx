@@ -155,6 +155,7 @@ export function AskFab() {
   const { userId, isAuthenticated } = useAuth();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isCommunity = pathname.startsWith("/community");
+  const showCommunityActions = pathname === "/community";
   const ask = useServerFn(askSenior);
   const tts = useServerFn(synthesizeAnswerSpeech);
   const [open, setOpen] = useState(false);
@@ -357,7 +358,7 @@ export function AskFab() {
   return (
     <>
       {/* 커뮤니티 페이지: 글쓰기 + 물어보기 하단 고정 액션바 */}
-      {isCommunity && !callActive && (
+      {showCommunityActions && !callActive && (
         <div
           className="fixed inset-x-0 z-50 flex gap-3 border-t border-border/50 bg-background/95 px-5 py-3 backdrop-blur-xl lg:absolute"
           style={{ bottom: "calc(env(safe-area-inset-bottom) + 82px)" }}

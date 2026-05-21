@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { recordWalkCheckin, getWalkStats } from "@/lib/engagement/walk-actions";
-import { getMyBadges } from "@/lib/engagement/badges-actions";
+import { getMyBadges, type Badge as UserBadge } from "@/lib/engagement/badges-actions";
+import { denyCareMemoryItem, listCareMemoryItems } from "@/lib/checkin/checkin-actions";
 import { toast } from "sonner";
 import {
   ChevronRight,
@@ -30,6 +31,8 @@ import {
   Award,
   CheckCircle2,
   Loader2,
+  Brain,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -101,6 +104,20 @@ function MyPage() {
     queryKey: ["my-badges"],
     queryFn: async () => getMyBadges({ headers: await authHeaders() } as any),
     staleTime: 60_000,
+  });
+  const { data: careMemories, isLoading: memoriesLoading } = useQuery({
+    queryKey: ["care-memory-items"],
+    queryFn: async () => listCareMemoryItems({ headers: await authHeaders() } as any),
+    staleTime: 30_000,
+  });
+  const forgetMemoryMutation = useMutation({
+    mutationFn: async (memoryId: string) =>
+      denyCareMemoryItem({ data: { memoryId }, headers: await authHeaders() } as any),
+    onSuccess: () => {
+      toast.success("이 기억은 다음 안부전화에 쓰지 않을게요.");
+      qc.invalidateQueries({ queryKey: ["care-memory-items"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "기억 삭제에 실패했어요"),
   });
   const earnedCount = badges?.badges.filter((b) => b.earned).length ?? 0;
   const totalBadges = badges?.badges.length ?? 0;
@@ -349,18 +366,28 @@ function MyPage() {
         )}
       </section>
 
-      {/* ── 4. 칭호 상세 (스크롤 앵커) ── */}
+      {/* ── 4. AI 기억 관리 ── */}
+      <section className="mt-6 animate-rise-in delay-200">
+        <CareMemorySection
+          memories={careMemories ?? []}
+          loading={memoriesLoading}
+          deletingId={forgetMemoryMutation.variables ?? null}
+          onForget={(id) => forgetMemoryMutation.mutate(id)}
+        />
+      </section>
+
+      {/* ── 5. 칭호 상세 (스크롤 앵커) ── */}
       <section id="badges-section" className="mt-6 animate-rise-in delay-200">
-        <BadgesSummary
+        <BadgesDetail
           earned={earnedCount}
           total={totalBadges}
           stats={badges?.stats}
-          recent={badges?.badges.filter((b) => b.earned).slice(0, 3) ?? []}
+          badges={badges?.badges ?? []}
           loading={!badges}
         />
       </section>
 
-      {/* ── 5. 고객센터 (하단, 작게) ── */}
+      {/* ── 6. 고객센터 (하단, 작게) ── */}
       <section className="mt-8 overflow-hidden rounded-2xl border border-border/60 bg-background animate-rise-in delay-300">
         <p className="px-4 pt-4 pb-2 text-xs font-semibold uppercase tracking-wide text-foreground/50">
           고객센터
@@ -397,7 +424,7 @@ function MyPage() {
         </ul>
       </section>
 
-      {/* ── 6. 로그아웃 ── */}
+      {/* ── 7. 로그아웃 ── */}
       <button
         type="button"
         className="mt-5 mb-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-border/40 py-3.5 text-sm font-medium text-foreground/55 transition hover:border-destructive/40 hover:text-destructive"
@@ -411,6 +438,94 @@ function MyPage() {
       </button>
     </SeniorAppLayout>
   );
+}
+
+type CareMemoryItem = Awaited<ReturnType<typeof listCareMemoryItems>>[number];
+
+function CareMemorySection({
+  memories,
+  loading,
+  deletingId,
+  onForget,
+}: {
+  memories: CareMemoryItem[];
+  loading: boolean;
+  deletingId: string | null;
+  onForget: (id: string) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-3xl border-2 border-border/60 bg-background shadow-soft">
+      <div className="flex items-start gap-3 px-5 py-5">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <Brain className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-display text-lg font-bold text-foreground">AI가 기억하는 내용</h2>
+          <p className="mt-1 text-sm leading-relaxed text-foreground/60">
+            안부전화에서 직접 말씀하신 반복 내용을 다음 질문에 참고해요.
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="px-5 pb-5">
+          <div className="h-24 animate-pulse rounded-2xl bg-muted/40" />
+        </div>
+      ) : memories.length === 0 ? (
+        <div className="border-t border-border/50 px-5 py-5">
+          <p className="rounded-2xl bg-surface px-4 py-3 text-sm font-medium leading-relaxed text-foreground/60">
+            아직 저장된 기억이 없어요. 안부전화가 쌓이면 식사, 약, 통증 같은 반복 내용을 조심스럽게 기억해요.
+          </p>
+        </div>
+      ) : (
+        <ul className="divide-y divide-border/50 border-t border-border/50">
+          {memories.map((memory) => (
+            <li key={memory.id} className="px-5 py-4">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 shrink-0 rounded-full bg-surface px-2.5 py-1 text-xs font-bold text-primary">
+                  {memoryTypeLabel(memory.memoryType)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold leading-relaxed text-foreground">{memory.content}</p>
+                  <p className="mt-1 text-xs font-medium text-foreground/45">
+                    {memory.observationCount}번 확인 · 신뢰도 {Math.round(memory.confidence * 100)}%
+                    {memory.lastObservedAt ? ` · ${formatMemoryDate(memory.lastObservedAt)}` : ""}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onForget(memory.id)}
+                disabled={deletingId === memory.id}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-2 text-xs font-bold text-foreground/60 transition hover:border-destructive/40 hover:text-destructive disabled:opacity-50"
+              >
+                {deletingId === memory.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                이 기억 쓰지 않기
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function memoryTypeLabel(type: string) {
+  return {
+    meal: "식사",
+    medicine: "약",
+    pain: "통증",
+    mood: "기분",
+    loneliness: "외로움",
+    dizziness: "어지러움",
+  }[type] ?? "기억";
+}
+
+function formatMemoryDate(value: string) {
+  return new Date(value).toLocaleDateString("ko-KR", {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 /* ── 큰 시각 카드 (Link 또는 button) ─────────────────────── */
@@ -480,46 +595,66 @@ function BigTile({
   );
 }
 
-/* ── 칭호 요약 카드 ─────────────────────────────────── */
-function BadgesSummary({
+/* ── 칭호 상세 카드 ─────────────────────────────────── */
+function BadgesDetail({
   earned,
   total,
   stats,
-  recent,
+  badges,
   loading,
 }: {
   earned: number;
   total: number;
-  stats: { checkinStreak: number; commentsCount: number; likesReceived: number } | undefined;
-  recent: Array<{ key: string; emoji: string; title: string; earned: boolean }>;
+  stats:
+    | {
+        checkinTotal: number;
+        checkinStreak: number;
+        commentsCount: number;
+        likesReceived: number;
+        postsCount: number;
+        walkTotal: number;
+        walkStreak: number;
+      }
+    | undefined;
+  badges: UserBadge[];
   loading: boolean;
 }) {
+  const nextBadge = badges.find((b) => !b.earned);
+
   return (
     <div className="overflow-hidden rounded-3xl border-2 border-border/60 bg-background shadow-soft">
-      <div className="flex items-baseline justify-between gap-3 px-5 pt-5 pb-3">
-        <div className="flex items-center gap-2">
-          <Award className="h-5 w-5 text-amber-warm" />
-          <h2 className="font-display text-lg font-bold text-foreground">나의 칭호</h2>
+      <div className="bg-gradient-to-br from-amber-soft via-background to-rose-soft px-5 pt-5 pb-4">
+        <p className="inline-flex items-center gap-1.5 rounded-full bg-background/80 px-3 py-1 text-xs font-bold text-amber-warm ring-1 ring-amber-warm/20">
+          <Award className="h-3.5 w-3.5" />
+          마이페이지 전용
+        </p>
+        <div className="mt-3 flex items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-xl font-bold text-foreground">나의 칭호</h2>
+            <p className="mt-1 text-sm font-medium text-foreground/60">
+              안부 통화, 산책, 이야기방 활동으로 천천히 모아요
+            </p>
+          </div>
+          {!loading && (
+            <div className="shrink-0 rounded-2xl bg-background/85 px-3 py-2 text-right ring-1 ring-border/50">
+              <p className="font-display text-2xl font-bold text-primary">{earned}</p>
+              <p className="text-[11px] font-semibold text-foreground/45">/{total}개</p>
+            </div>
+          )}
         </div>
-        {!loading && (
-          <p className="text-sm font-medium text-foreground/55">
-            <span className="text-primary font-bold">{earned}</span>
-            <span className="text-foreground/40"> / {total}개</span>
-          </p>
-        )}
       </div>
 
       {loading ? (
         <div className="px-5 pb-5">
-          <div className="h-20 animate-pulse rounded-2xl bg-muted/40" />
+          <div className="mt-5 h-48 animate-pulse rounded-2xl bg-muted/40" />
         </div>
       ) : (
         <>
           {stats && (
-            <div className="mx-5 grid grid-cols-3 divide-x divide-border/40 rounded-2xl border border-border/40 bg-surface/60 py-3">
+            <div className="mx-5 mt-5 grid grid-cols-3 divide-x divide-border/40 rounded-2xl border border-border/40 bg-surface/60 py-3">
               {[
                 { v: stats.checkinStreak, l: "연속 안부" },
-                { v: stats.commentsCount, l: "댓글" },
+                { v: stats.walkStreak, l: "연속 산책" },
                 { v: stats.likesReceived, l: "공감 받음" },
               ].map((s) => (
                 <div key={s.l} className="flex flex-col items-center justify-center gap-0.5">
@@ -530,25 +665,75 @@ function BadgesSummary({
             </div>
           )}
 
-          {recent.length > 0 && (
-            <div className="mx-5 mt-3 mb-5 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {recent.map((b) => (
-                <div
-                  key={b.key}
-                  className="flex shrink-0 flex-col items-center gap-1.5 rounded-2xl bg-gradient-to-br from-rose-soft to-amber-soft px-4 py-3 shadow-soft"
-                  title={b.title}
-                >
-                  <span className="text-2xl">{b.emoji}</span>
-                  <span className="max-w-[80px] truncate text-[11px] font-bold text-foreground">{b.title}</span>
+          {nextBadge && (
+            <div className="mx-5 mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+              <p className="text-xs font-bold text-primary">다음으로 받을 수 있는 칭호</p>
+              <div className="mt-2 flex items-center gap-3">
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-background text-2xl shadow-soft">
+                  {nextBadge.emoji}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-display text-base font-bold text-foreground">{nextBadge.title}</p>
+                  <p className="mt-0.5 text-sm text-foreground/60">{nextBadge.description}</p>
+                  {nextBadge.progress && (
+                    <p className="mt-1 text-xs font-semibold text-foreground/50">
+                      {nextBadge.progress.current} / {nextBadge.progress.target} 만큼 했어요
+                    </p>
+                  )}
                 </div>
-              ))}
+              </div>
             </div>
           )}
-          {recent.length === 0 && (
-            <p className="px-5 pb-5 text-sm text-foreground/55">
-              안부 통화 · 산책 · 댓글로 칭호를 모아보세요
-            </p>
-          )}
+
+          <ul className="mt-4 flex flex-col gap-2 px-3 pb-4">
+            {badges.map((b) => {
+              const pct = b.progress
+                ? Math.min(100, (b.progress.current / b.progress.target) * 100)
+                : b.earned
+                  ? 100
+                  : 0;
+              return (
+                <li
+                  key={b.key}
+                  className={cn(
+                    "flex items-center gap-3 rounded-2xl px-3 py-3",
+                    b.earned ? "bg-surface/80" : "bg-background",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-2xl",
+                      b.earned ? "bg-gradient-to-br from-rose-soft to-amber-soft shadow-soft" : "bg-muted/50 grayscale opacity-70",
+                    )}
+                  >
+                    {b.emoji}
+                    {b.earned && (
+                      <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                        ✓
+                      </span>
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="truncate font-display text-base font-bold text-foreground">{b.title}</p>
+                      <span className={cn("shrink-0 text-xs font-bold", b.earned ? "text-primary" : "text-foreground/45")}>
+                        {b.earned ? "완료" : b.progress ? `${b.progress.current}/${b.progress.target}` : "대기"}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-sm text-foreground/55">{b.description}</p>
+                    {!b.earned && (
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border/60">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-primary/55 to-primary transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </>
       )}
     </div>

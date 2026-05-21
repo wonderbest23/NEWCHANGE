@@ -68,6 +68,7 @@ const RULE_LABEL: Record<string, string> = {
   R002: "식사 미확인 반복",
   R003: "복약 미확인 반복",
   R004: "통화에서 이런 표현이 기록됐어요",
+  R007: "안부전화 긴급 확인 표현",
 };
 
 async function withAuth<T>(
@@ -288,6 +289,8 @@ function AlertCard({
   });
 
   const evidenceExcerpt = extractEvidenceText(alert.evidence);
+  const evidenceSources = extractEvidenceSources(alert.evidence);
+  const recommendedAction = extractRecommendedAction(alert.evidence);
 
   return (
     <li
@@ -342,6 +345,23 @@ function AlertCard({
               <div className="mt-2 rounded-xl bg-surface/60 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground">
                 <span className="text-foreground/80">기록 일부:</span>{" "}
                 “{evidenceExcerpt}”
+              </div>
+            )}
+            {alert.rule_code === "R007" && (
+              <div className="mt-3 rounded-2xl border border-primary/20 bg-primary/5 p-3 text-[12px] leading-relaxed">
+                {recommendedAction && (
+                  <p className="font-medium text-foreground">
+                    {recommendedAction}
+                  </p>
+                )}
+                {evidenceSources.length > 0 && (
+                  <p className="mt-2 text-muted-foreground">
+                    근거 출처: {evidenceSources.join(", ")}
+                  </p>
+                )}
+                <p className="mt-2 text-muted-foreground">
+                  이 알림은 진단이 아니라 보호자 확인이 필요한 표현을 전달하는 기록입니다.
+                </p>
               </div>
             )}
           </div>
@@ -410,4 +430,17 @@ function extractEvidenceText(evidence: object | null | undefined): string | null
     }
   }
   return null;
+}
+
+function extractEvidenceSources(evidence: object | null | undefined): string[] {
+  if (!evidence || typeof evidence !== "object") return [];
+  const value = (evidence as Record<string, unknown>).evidence_sources;
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function extractRecommendedAction(evidence: object | null | undefined): string | null {
+  if (!evidence || typeof evidence !== "object") return null;
+  const value = (evidence as Record<string, unknown>).recommended_action;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }

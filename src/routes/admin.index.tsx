@@ -34,6 +34,20 @@ type RecentCheckin = AdminDashboardRecent;
 const EMPTY_STATS = { seniors: 0, todayCheckins: 0, weekCheckins: 0, urgentOpen: 0 };
 const EMPTY_LEVELS = { good: 0, normal: 0, caution: 0, urgent: 0 };
 const EMPTY_HOURS = Array(24).fill(0) as number[];
+const EMPTY_QUALITY = {
+  totalEvents: 0,
+  completedCalls: 0,
+  failedCalls: 0,
+  draftSaved: 0,
+  correctionEvents: 0,
+  avgStepCompletionPct: 0,
+  missingStepEventPct: 0,
+  urgentQualityEvents: 0,
+  avgJitterMs: null as number | null,
+  avgRttMs: null as number | null,
+  packetLossEvents: 0,
+  topIssueFlags: [] as { flag: string; count: number }[],
+};
 
 function AdminPage() {
   const { user, loading } = useAuth();
@@ -55,6 +69,7 @@ function AdminPage() {
   const otherCount = dash?.otherCount ?? 0;
   const districtCheckins = dash?.districtCheckins ?? [];
   const hourlyDist = dash?.hourlyDist ?? EMPTY_HOURS;
+  const quality = dash?.quality ?? EMPTY_QUALITY;
 
   if (loading || appStateLoading) return null;
 
@@ -114,6 +129,44 @@ function AdminPage() {
           value={stats.urgentOpen.toLocaleString()}
           tone={stats.urgentOpen > 0 ? "rose" : "sage"}
         />
+      </section>
+
+      <section className="mt-8 rounded-3xl border border-border/60 bg-card p-6">
+        <header className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="font-display text-xl text-foreground">안부전화 품질</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              최근 7일 기준 · 완료율, 누락률, 수정률, WebRTC 음성 품질 통계
+            </p>
+          </div>
+          <StatusBadge tone={quality.failedCalls > 0 || quality.missingStepEventPct >= 20 ? "amber" : "sage"} dot>
+            {quality.totalEvents}건 기록
+          </StatusBadge>
+        </header>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <QualityMetric label="질문 완료율" value={`${quality.avgStepCompletionPct}%`} />
+          <QualityMetric label="답변 누락 세션" value={`${quality.missingStepEventPct}%`} tone={quality.missingStepEventPct >= 20 ? "warn" : "ok"} />
+          <QualityMetric label="실패/짧은 통화" value={`${quality.failedCalls}건`} tone={quality.failedCalls > 0 ? "warn" : "ok"} />
+          <QualityMetric label="수정 발생" value={`${quality.correctionEvents}건`} />
+          <QualityMetric label="긴급 감지" value={`${quality.urgentQualityEvents}건`} tone={quality.urgentQualityEvents > 0 ? "warn" : "ok"} />
+          <QualityMetric label="평균 jitter" value={quality.avgJitterMs == null ? "—" : `${quality.avgJitterMs}ms`} tone={(quality.avgJitterMs ?? 0) >= 80 ? "warn" : "ok"} />
+          <QualityMetric label="평균 RTT" value={quality.avgRttMs == null ? "—" : `${quality.avgRttMs}ms`} tone={(quality.avgRttMs ?? 0) >= 500 ? "warn" : "ok"} />
+          <QualityMetric label="패킷 손실 관측" value={`${quality.packetLossEvents}건`} tone={quality.packetLossEvents > 0 ? "warn" : "ok"} />
+        </div>
+
+        {quality.topIssueFlags.length > 0 && (
+          <div className="mt-5 rounded-2xl bg-surface p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">자주 나온 품질 플래그</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {quality.topIssueFlags.map((item) => (
+                <span key={item.flag} className="rounded-full border border-border/70 bg-card px-3 py-1 text-sm text-foreground/80">
+                  {labelIssueFlag(item.flag)} · {item.count}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* 7일 상태 분포 + 최근 통화 */}
@@ -420,6 +473,37 @@ function Stat({
       <p className="mt-3 font-display text-2xl text-foreground">{value}</p>
     </div>
   );
+}
+
+function QualityMetric({
+  label,
+  value,
+  tone = "ok",
+}: {
+  label: string;
+  value: string;
+  tone?: "ok" | "warn";
+}) {
+  return (
+    <div className="rounded-2xl border border-border/60 bg-background p-4">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className={tone === "warn" ? "mt-2 font-display text-2xl text-destructive" : "mt-2 font-display text-2xl text-foreground"}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function labelIssueFlag(flag: string) {
+  return {
+    missing_steps: "질문 누락",
+    high_jitter: "지터 높음",
+    high_rtt: "응답 지연",
+    packet_loss_seen: "패킷 손실",
+    save_failed: "저장 실패",
+    too_short: "짧은 통화",
+    urgent_notice: "긴급 표현",
+  }[flag] ?? flag;
 }
 
 function labelLevel(l: string) {

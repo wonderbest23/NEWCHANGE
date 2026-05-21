@@ -7,6 +7,8 @@
 import { toast } from "sonner";
 import { analyzeAndSaveCheckin } from "@/lib/checkin/checkin-actions";
 import { getSessionCached } from "@/lib/auth/session-cache";
+import type { CheckinStepAnswer } from "@/lib/checkin/checkin-steps";
+import type { CheckinQuestionPlan, CheckinStepId } from "@/lib/checkin/checkin-steps";
 
 const STORAGE_KEY = "gyeot:pending-checkin-save";
 const DRAFT_STORAGE_KEY = "gyeot:draft-checkin-call";
@@ -14,6 +16,7 @@ export const CHECKIN_SAVED_EVENT = "checkin-saved";
 
 type Payload = {
   transcript: { role: "user" | "ai"; text: string }[];
+  stepAnswers?: CheckinStepAnswer[];
   durationSec: number;
   shareWithGuardian: boolean;
 };
@@ -21,6 +24,10 @@ type Payload = {
 export type CheckinCallDraft = Payload & {
   savedAt: number;
   startedAt?: number | null;
+  currentStepId?: CheckinStepId;
+  lastQuestion?: string;
+  questionPlan?: CheckinQuestionPlan;
+  urgentNotice?: string | null;
   reason?: "hidden" | "pagehide" | "disconnect" | "unmount" | "manual";
 };
 

@@ -1,5 +1,5 @@
 // OpenAI 직접 호출 공용 엣지 함수.
-// task: "polish" (글 다듬기) | "answer" (법률/복지 1차 답변)
+// task: "polish" (글 다듬기) | "suggest_title" (제목 추천) | "answer" (법률/복지 1차 답변)
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
@@ -9,7 +9,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type Task = "polish" | "answer";
+type Task = "polish" | "suggest_title" | "answer";
 
 const SYSTEM: Record<Task, string> = {
   polish: `당신은 한국 시니어 사용자가 쓴 커뮤니티 글을 다듬는 편집자입니다.
@@ -19,6 +19,12 @@ const SYSTEM: Record<Task, string> = {
 - 너무 거칠거나 공격적인 표현은 따뜻하고 정중하게 바꾸되, 글쓴이의 진심은 유지하세요.
 - 문단을 자연스럽게 나누세요.
 - 결과는 다듬어진 본문만 출력하세요. 설명/머리말/마크다운 헤더 없이.`,
+  suggest_title: `당신은 한국 시니어 커뮤니티 글쓰기 도우미입니다.
+규칙:
+- 사용자가 적은 초안을 바탕으로 쉬운 한국어 제목 후보 3개를 만드세요.
+- 각 제목은 18자 이내로 짧고 따뜻하게 쓰세요.
+- 과장, 낚시성 표현, 새 사실 추가는 금지합니다.
+- 번호, 따옴표, 설명 없이 제목만 줄바꿈으로 출력하세요.`,
   answer: `당신은 한국 시니어 커뮤니티의 친절한 1차 안내 도우미입니다.
 규칙:
 - 글의 카테고리(법률자문/복지혜택/구인구직 등)에 맞춰 일반적인 정보 차원의 답을 줍니다.
@@ -35,11 +41,14 @@ serve(async (req) => {
 
   try {
     const { task, title, body, category } = await req.json();
-    if (!task || !body || typeof body !== "string") {
-      return json({ error: "task와 body는 필수입니다." }, 400);
+    if (!task) {
+      return json({ error: "task는 필수입니다." }, 400);
     }
-    if (task !== "polish" && task !== "answer") {
+    if (task !== "polish" && task !== "answer" && task !== "suggest_title") {
       return json({ error: "지원하지 않는 task입니다." }, 400);
+    }
+    if (task !== "suggest_title" && (!body || typeof body !== "string")) {
+      return json({ error: "body는 필수입니다." }, 400);
     }
 
     const apiKey = Deno.env.get("OPENAI_API_KEY");
@@ -48,6 +57,8 @@ serve(async (req) => {
     const userMsg =
       task === "polish"
         ? `다음 시니어 회원이 쓴 글을 다듬어 주세요.\n\n[제목]\n${title ?? "(제목 없음)"}\n\n[본문]\n${body}`
+        : task === "suggest_title"
+        ? `카테고리: ${category ?? "일반"}\n\n[사용자가 적은 제목 초안]\n${title ?? ""}\n\n[본문 초안]\n${body ?? ""}\n\n위 내용을 보고 제목 후보 3개를 만들어 주세요.`
         : `카테고리: ${category ?? "일반"}\n\n[질문 제목]\n${title ?? "(제목 없음)"}\n\n[질문 본문]\n${body}\n\n위 질문에 대한 1차 안내를 작성해 주세요.`;
 
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {

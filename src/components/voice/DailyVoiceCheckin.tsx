@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { Mic, MicOff, PhoneOff, Phone, Sparkles, Loader2, Moon } from "lucide-react";
+import { Mic, MicOff, PhoneOff, Phone, Sparkles, Loader2, Moon, AlertTriangle, CheckCircle2, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createRealtimeSession } from "@/lib/voice-test-actions";
-import { analyzeAndSaveCheckin } from "@/lib/checkin/checkin-actions";
+import {
+  amendTodayCheckinReview,
+  analyzeAndSaveCheckin,
+  denyCareMemoryItem,
+  getCheckinOpeningMemory,
+  recordCheckinQualityEvent,
+} from "@/lib/checkin/checkin-actions";
+import { authHeaders } from "@/lib/auth/server-fn-headers";
 import {
   queueCheckinSave,
   CHECKIN_SAVED_EVENT,
@@ -17,11 +24,56 @@ import {
 import { trackEvent } from "@/lib/analytics/trackEvent";
 import { ANALYTICS_EVENTS } from "@/lib/analytics/eventNames";
 import { resolveEmotion } from "@/lib/checkin/emotion";
+import {
+  buildCheckinStepAnswers,
+  buildCheckinQuestionPlan,
+  CHECKIN_STEPS,
+  getPlannedStepById,
+  type CheckinQuestionPlan,
+  type CheckinStepAnswer,
+  type CheckinStepId,
+} from "@/lib/checkin/checkin-steps";
+import { detectEvidenceBasedRisks, hasUrgentEvidenceRisk } from "@/lib/checkin/evidence-risk";
+import {
+  createInitialCheckinState,
+  decideAfterAnswer,
+  getOpeningPrompt,
+  isUnclearAnswerText,
+  type CheckinMachineState,
+} from "@/lib/checkin/checkin-state-machine";
 
 type Transcript = { role: "user" | "ai"; text: string; ts: number; partial?: boolean };
 type Status = "idle" | "connecting" | "live" | "ended" | "analyzing";
+type TurnState = "idle" | "ai_speaking" | "user_can_speak";
 
 type AnalyzeResult = Awaited<ReturnType<typeof analyzeAndSaveCheckin>>;
+type OpeningMemory = Awaited<ReturnType<typeof getCheckinOpeningMemory>>;
+type AudioQualityStats = {
+  samples: number;
+  maxJitterMs: number;
+  maxRttMs: number;
+  maxPacketsLost: number;
+  lastPacketsLost: number;
+  lastPacketsReceived: number;
+  sampledAt?: number;
+};
+type MicSignalStats = {
+  samples: number;
+  maxRms: number;
+  avgRms: number;
+  lowRmsSamples: number;
+};
+
+function stepLabel(stepId: CheckinStepId): string {
+  return {
+    Q1_MEAL: "식사",
+    Q2_CONDITION: "몸 상태",
+    Q3_PAIN: "통증과 불편",
+    Q4_MEDICINE: "약",
+    Q5_MOOD: "기분",
+    Q6_HELP: "도움 요청",
+  }[stepId];
+}
 
 /**
  * 시니어 홈에 임베드되는 매일 안부 통화 카드.
@@ -46,6 +98,12 @@ export function DailyVoiceCheckin({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [draft, setDraft] = useState<CheckinCallDraft | null>(null);
+  const [turnState, setTurnState] = useState<TurnState>("idle");
+  const [stepAnswers, setStepAnswers] = useState<CheckinStepAnswer[]>([]);
+  const [urgentNotice, setUrgentNotice] = useState<string | null>(null);
+  const [showConversationReview, setShowConversationReview] = useState(false);
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [userSpeaking, setUserSpeaking] = useState(false);
   const startedAtRef = useRef<number | null>(null);
   const autoEndTriggeredRef = useRef(false);
 
@@ -59,9 +117,20 @@ export function DailyVoiceCheckin({
   // 자동 저장(언마운트/페이지 이동/탭 종료 시)을 위해 최신 값을 ref에 동기화
   const transcriptsRef = useRef<Transcript[]>([]);
   const statusRef = useRef<Status>("idle");
+  const mutedRef = useRef(false);
+  const stepAnswersRef = useRef<CheckinStepAnswer[]>([]);
+  const currentStepIdRef = useRef<CheckinStepId>("Q1_MEAL");
+  const currentQuestionRef = useRef("오늘 식사는 하셨어요?");
+  const currentQuestionTsRef = useRef<number | undefined>(undefined);
+  const questionPlanRef = useRef<CheckinQuestionPlan>(buildCheckinQuestionPlan());
+  const machineStateRef = useRef<CheckinMachineState>(
+    createInitialCheckinState("Q1_MEAL", questionPlanRef.current),
+  );
+  const openingMemoryRef = useRef<OpeningMemory | null>(null);
+  const openingMemoryCheckedRef = useRef(false);
 
   // 음성 안정화용 refs
-  // - AI 발화 직후 짧은 잔향만 거르고, 사용자 답변은 최대한 보존
+  // - AI 발화 중에는 마이크를 잠가 스피커 잔향/끼어들기 전사를 막고, 발화가 끝난 뒤에만 답변을 받는다
   // - 같은 transcript가 짧은 간격으로 중복되면 무시
   // - 응답 생성 중복 락
   const isAssistantSpeakingRef = useRef(false);
@@ -72,11 +141,324 @@ export function DailyVoiceCheckin({
   const assistantSilenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openingGreetingSentRef = useRef(false);
   const remoteReadyRef = useRef(false);
+  const pendingAutoEndRef = useRef(false);
+  const pendingAutoEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftAutosaveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const qualityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const micAnalyserRef = useRef<AnalyserNode | null>(null);
+  const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const micSignalRef = useRef<MicSignalStats>({
+    samples: 0,
+    maxRms: 0,
+    avgRms: 0,
+    lowRmsSamples: 0,
+  });
+  const audioQualityRef = useRef<AudioQualityStats>({
+    samples: 0,
+    maxJitterMs: 0,
+    maxRttMs: 0,
+    maxPacketsLost: 0,
+    lastPacketsLost: 0,
+    lastPacketsReceived: 0,
+  });
 
   const setMicEnabled = (enabled: boolean) => {
     localStreamRef.current?.getAudioTracks().forEach((t) => {
-      t.enabled = enabled;
+      t.enabled = enabled && !mutedRef.current;
     });
+  };
+
+  const resetAudioQualityStats = () => {
+    audioQualityRef.current = {
+      samples: 0,
+      maxJitterMs: 0,
+      maxRttMs: 0,
+      maxPacketsLost: 0,
+      lastPacketsLost: 0,
+      lastPacketsReceived: 0,
+    };
+  };
+
+  const resetMicSignalStats = () => {
+    micSignalRef.current = {
+      samples: 0,
+      maxRms: 0,
+      avgRms: 0,
+      lowRmsSamples: 0,
+    };
+  };
+
+  const startMicSignalSampling = (stream: MediaStream) => {
+    stopMicSignalSampling();
+    resetMicSignalStats();
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      audioContextRef.current = ctx;
+      micAnalyserRef.current = analyser;
+      const buffer = new Uint8Array(analyser.fftSize);
+      micLevelTimerRef.current = setInterval(() => {
+        analyser.getByteTimeDomainData(buffer);
+        let sumSquares = 0;
+        let peak = 0;
+        for (const v of buffer) {
+          const centered = (v - 128) / 128;
+          sumSquares += centered * centered;
+          peak = Math.max(peak, Math.abs(centered));
+        }
+        const rms = Math.sqrt(sumSquares / buffer.length);
+        const prev = micSignalRef.current;
+        const samples = prev.samples + 1;
+        micSignalRef.current = {
+          samples,
+          maxRms: Math.max(prev.maxRms, peak, rms),
+          avgRms: (prev.avgRms * prev.samples + rms) / samples,
+          lowRmsSamples: prev.lowRmsSamples + (rms < 0.012 ? 1 : 0),
+        };
+      }, 350);
+    } catch (e) {
+      console.warn("[checkin-audio] mic level sampling failed", e);
+    }
+  };
+
+  const stopMicSignalSampling = () => {
+    if (micLevelTimerRef.current) {
+      clearInterval(micLevelTimerRef.current);
+      micLevelTimerRef.current = null;
+    }
+    try { audioContextRef.current?.close(); } catch {}
+    audioContextRef.current = null;
+    micAnalyserRef.current = null;
+  };
+
+  const sampleAudioQuality = async () => {
+    const pc = pcRef.current;
+    if (!pc) return;
+    try {
+      const reports = await pc.getStats();
+      const next = { ...audioQualityRef.current };
+      next.samples += 1;
+      next.sampledAt = Date.now();
+
+      reports.forEach((report: any) => {
+        const isAudio = report.kind === "audio" || report.mediaType === "audio";
+        if (!isAudio) return;
+
+        if (report.type === "inbound-rtp") {
+          if (typeof report.jitter === "number") {
+            next.maxJitterMs = Math.max(next.maxJitterMs, Math.round(report.jitter * 1000));
+          }
+          if (typeof report.packetsLost === "number") {
+            next.lastPacketsLost = report.packetsLost;
+            next.maxPacketsLost = Math.max(next.maxPacketsLost, report.packetsLost);
+          }
+          if (typeof report.packetsReceived === "number") {
+            next.lastPacketsReceived = report.packetsReceived;
+          }
+        }
+
+        if (report.type === "remote-inbound-rtp" && typeof report.roundTripTime === "number") {
+          next.maxRttMs = Math.max(next.maxRttMs, Math.round(report.roundTripTime * 1000));
+        }
+      });
+
+      audioQualityRef.current = next;
+    } catch (e) {
+      console.warn("[checkin-quality] getStats failed", e);
+    }
+  };
+
+  const startAudioQualitySampling = () => {
+    resetAudioQualityStats();
+    if (qualityTimerRef.current) clearInterval(qualityTimerRef.current);
+    void sampleAudioQuality();
+    qualityTimerRef.current = setInterval(() => {
+      void sampleAudioQuality();
+    }, 5000);
+  };
+
+  const stopAudioQualitySampling = () => {
+    if (qualityTimerRef.current) {
+      clearInterval(qualityTimerRef.current);
+      qualityTimerRef.current = null;
+    }
+  };
+
+  const isWeakMicSignal = () => {
+    const stats = micSignalRef.current;
+    if (stats.samples < 4) return false;
+    const lowRatio = stats.lowRmsSamples / stats.samples;
+    return stats.maxRms < 0.035 && lowRatio >= 0.75;
+  };
+
+  const isAmbiguousTranscript = (text: string) => {
+    const compact = text.replace(/[.,!?…~\s]/g, "");
+    if (isUnclearAnswerText(text)) return true;
+    if (compact.length <= 1) return true;
+    if (compact.length <= 3 && isWeakMicSignal()) return true;
+    return false;
+  };
+
+  const runPendingAutoEnd = () => {
+    if (pendingAutoEndTimerRef.current) clearTimeout(pendingAutoEndTimerRef.current);
+    pendingAutoEndTimerRef.current = setTimeout(() => {
+      if (!pendingAutoEndRef.current) return;
+      pendingAutoEndRef.current = false;
+      if (statusRef.current === "live" || statusRef.current === "connecting") {
+        endCallRef.current();
+      }
+    }, 0);
+  };
+
+  const scheduleAutoEnd = (delayMs = 1800) => {
+    pendingAutoEndRef.current = true;
+    if (pendingAutoEndTimerRef.current) clearTimeout(pendingAutoEndTimerRef.current);
+    pendingAutoEndTimerRef.current = setTimeout(runPendingAutoEnd, delayMs);
+  };
+
+  const waitForAssistantThenAutoEnd = (fallbackMs = 12000) => {
+    pendingAutoEndRef.current = true;
+    if (pendingAutoEndTimerRef.current) clearTimeout(pendingAutoEndTimerRef.current);
+    pendingAutoEndTimerRef.current = setTimeout(runPendingAutoEnd, fallbackMs);
+  };
+
+  const canAutoEndNow = () => {
+    const state = machineStateRef.current;
+    const completedCount = stepAnswersRef.current.length;
+    const expectedCount = questionPlanRef.current.length || CHECKIN_STEPS.length;
+    return state.ended && (
+      state.escalated ||
+      completedCount >= expectedCount ||
+      state.completedStepIds.length >= expectedCount ||
+      state.endRequestCount >= 2
+    );
+  };
+
+  const startDraftAutosave = () => {
+    if (draftAutosaveTimerRef.current) clearInterval(draftAutosaveTimerRef.current);
+    draftAutosaveTimerRef.current = setInterval(() => {
+      if (statusRef.current === "live" || statusRef.current === "connecting") {
+        saveDraftFromCurrentState("manual");
+      }
+    }, 5000);
+  };
+
+  const stopDraftAutosave = () => {
+    if (draftAutosaveTimerRef.current) {
+      clearInterval(draftAutosaveTimerRef.current);
+      draftAutosaveTimerRef.current = null;
+    }
+  };
+
+  const summarizeQuality = (
+    statusValue: "completed" | "failed" | "too_short" | "draft_saved" | "review_corrected",
+    sourceTranscripts = transcriptsRef.current,
+    sourceStepAnswers = stepAnswersRef.current,
+  ) => {
+    const completed = new Set(sourceStepAnswers.map((answer) => answer.stepId));
+    const expectedPlan = questionPlanRef.current.length ? questionPlanRef.current : CHECKIN_STEPS;
+    const missingStepIds = expectedPlan
+      .map((step) => step.id)
+      .filter((stepId) => !completed.has(stepId));
+    const audio = audioQualityRef.current;
+    const issueFlags = [
+      missingStepIds.length > 0 ? "missing_steps" : null,
+      audio.maxJitterMs >= 80 ? "high_jitter" : null,
+      audio.maxRttMs >= 500 ? "high_rtt" : null,
+      audio.maxPacketsLost > 0 ? "packet_loss_seen" : null,
+      statusValue === "failed" ? "save_failed" : null,
+      statusValue === "too_short" ? "too_short" : null,
+      urgentNotice ? "urgent_notice" : null,
+    ].filter(Boolean) as string[];
+
+    return {
+      expectedStepCount: expectedPlan.length,
+      completedStepCount: completed.size,
+      missingStepIds,
+      transcriptTurnCount: sourceTranscripts.length,
+      userTurnCount: sourceTranscripts.filter((turn) => turn.role === "user").length,
+      assistantTurnCount: sourceTranscripts.filter((turn) => turn.role === "ai").length,
+      urgentDetected: !!urgentNotice || sourceStepAnswers.some((answer) =>
+        (answer.riskMatches ?? []).some((risk) => risk.severity === "urgent"),
+      ),
+      issueFlags,
+      audioStats: {
+        samples: audio.samples,
+        maxJitterMs: audio.maxJitterMs,
+        maxRttMs: audio.maxRttMs,
+        maxPacketsLost: audio.maxPacketsLost,
+        lastPacketsLost: audio.lastPacketsLost,
+        lastPacketsReceived: audio.lastPacketsReceived,
+        micSamples: micSignalRef.current.samples,
+        micMaxRms: Number(micSignalRef.current.maxRms.toFixed(4)),
+        micAvgRms: Number(micSignalRef.current.avgRms.toFixed(4)),
+        micLowRmsSamples: micSignalRef.current.lowRmsSamples,
+      },
+    };
+  };
+
+  const recordQuality = async (
+    statusValue: "completed" | "failed" | "too_short" | "draft_saved" | "review_corrected",
+    opts: {
+      checkinId?: string | null;
+      durationSec?: number;
+      transcripts?: Transcript[];
+      stepAnswers?: CheckinStepAnswer[];
+      correctionCount?: number;
+      draftReason?: string | null;
+    } = {},
+  ) => {
+    const sourceTranscripts = opts.transcripts ?? transcriptsRef.current;
+    const sourceStepAnswers = opts.stepAnswers ?? stepAnswersRef.current;
+    const durationSec = opts.durationSec ?? (startedAtRef.current
+      ? Math.round((Date.now() - startedAtRef.current) / 1000)
+      : 0);
+    const summary = summarizeQuality(statusValue, sourceTranscripts, sourceStepAnswers);
+    await recordCheckinQualityEvent({
+      headers: await authHeaders(),
+      data: {
+        checkinId: opts.checkinId ?? null,
+        status: statusValue,
+        durationSec,
+        ...summary,
+        correctionCount: opts.correctionCount ?? 0,
+        resumedFromDraft: !!draft,
+        draftReason: opts.draftReason ?? draft?.reason ?? null,
+      },
+    } as Parameters<typeof recordCheckinQualityEvent>[0]);
+  };
+
+  const prepareAssistantTurn = () => {
+    isProcessingTurnRef.current = true;
+    setTurnState("ai_speaking");
+    setUserSpeaking(false);
+    setMicEnabled(false);
+  };
+
+  const lockUserInputForAssistantAudio = () => {
+    prepareAssistantTurn();
+    isAssistantSpeakingRef.current = true;
+    lastAssistantAudioAtRef.current = Date.now();
+    if (assistantSilenceTimerRef.current) {
+      clearTimeout(assistantSilenceTimerRef.current);
+      assistantSilenceTimerRef.current = null;
+    }
+  };
+
+  const unlockUserInputAfterAssistant = (delayMs = 650) => {
+    if (assistantSilenceTimerRef.current) clearTimeout(assistantSilenceTimerRef.current);
+    assistantSilenceTimerRef.current = setTimeout(() => {
+      isAssistantSpeakingRef.current = false;
+      isProcessingTurnRef.current = false;
+      setTurnState("user_can_speak");
+      setMicEnabled(true);
+    }, delayMs);
   };
 
   const saveDraftFromCurrentState = (
@@ -90,9 +472,14 @@ export function DailyVoiceCheckin({
       : draft?.durationSec ?? 0;
     saveCheckinCallDraft({
       transcript: clean.map((t) => ({ role: t.role, text: t.text })),
+      stepAnswers: stepAnswersRef.current,
       durationSec,
       shareWithGuardian: true,
       startedAt: startedAtRef.current,
+      currentStepId: currentStepIdRef.current,
+      lastQuestion: currentQuestionRef.current,
+      questionPlan: questionPlanRef.current,
+      urgentNotice,
       reason,
     });
     setDraft(loadCheckinCallDraft());
@@ -104,6 +491,9 @@ export function DailyVoiceCheckin({
   ) => {
     autoEndTriggeredRef.current = true;
     saveDraftFromCurrentState(reason);
+    void recordQuality("draft_saved", { draftReason: reason }).catch((e) =>
+      console.warn("[checkin-quality] draft event failed", e),
+    );
     cleanup();
     setStatus("idle");
     toast(message);
@@ -122,6 +512,16 @@ export function DailyVoiceCheckin({
       ...t,
       ts: saved.savedAt + i,
     })));
+    setStepAnswers(saved.stepAnswers ?? []);
+    if (saved.questionPlan?.length) {
+      questionPlanRef.current = saved.questionPlan;
+    }
+    if (saved.currentStepId) {
+      currentStepIdRef.current = saved.currentStepId;
+      machineStateRef.current = createInitialCheckinState(saved.currentStepId, questionPlanRef.current);
+    }
+    if (saved.lastQuestion) currentQuestionRef.current = saved.lastQuestion;
+    if (saved.urgentNotice) setUrgentNotice(saved.urgentNotice);
     startedAtRef.current = saved.startedAt ?? Date.now() - saved.durationSec * 1000;
   }, []);
 
@@ -135,6 +535,14 @@ export function DailyVoiceCheckin({
   // transcripts/status 변경을 ref에 동기화 — 언마운트 시점에서도 최신 값 참조 가능
   useEffect(() => { transcriptsRef.current = transcripts; }, [transcripts]);
   useEffect(() => { statusRef.current = status; }, [status]);
+  useEffect(() => { stepAnswersRef.current = stepAnswers; }, [stepAnswers]);
+
+  useEffect(() => {
+    if (status !== "live" && status !== "connecting") return;
+    if (stepAnswers.length === 0) return;
+    saveDraftFromCurrentState("manual");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepAnswers, status]);
 
   // 통화 활성 상태를 전역에 알려 다른 플로팅 UI(예: AskFab)가 숨도록 함
   useEffect(() => {
@@ -176,6 +584,18 @@ export function DailyVoiceCheckin({
   }, [status]);
 
   const cleanup = () => {
+    stopDraftAutosave();
+    stopAudioQualitySampling();
+    stopMicSignalSampling();
+    if (pendingAutoEndTimerRef.current) {
+      clearTimeout(pendingAutoEndTimerRef.current);
+      pendingAutoEndTimerRef.current = null;
+    }
+    pendingAutoEndRef.current = false;
+    if (assistantSilenceTimerRef.current) {
+      clearTimeout(assistantSilenceTimerRef.current);
+      assistantSilenceTimerRef.current = null;
+    }
     try { dcRef.current?.close(); } catch {}
     try { localStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
     try { pcRef.current?.close(); } catch {}
@@ -188,6 +608,29 @@ export function DailyVoiceCheckin({
     dcRef.current = null;
     localStreamRef.current = null;
     pcRef.current = null;
+    isAssistantSpeakingRef.current = false;
+    isProcessingTurnRef.current = false;
+    setTurnState("idle");
+    setUserSpeaking(false);
+  };
+
+  const rememberAssistantQuestion = (stepId: CheckinStepId, text: string, ts = Date.now()) => {
+    currentStepIdRef.current = stepId;
+    currentQuestionRef.current = text.trim();
+    currentQuestionTsRef.current = ts;
+  };
+
+  const sendDirectedAssistantPrompt = (prompt: string, stepId: CheckinStepId | null) => {
+    const dc = dcRef.current;
+    if (!dc || dc.readyState !== "open") return;
+    if (stepId) rememberAssistantQuestion(stepId, getPlannedStepById(stepId, questionPlanRef.current).prompt, Date.now());
+    prepareAssistantTurn();
+    dc.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        instructions: prompt,
+      },
+    }));
   };
 
   const isMeaningfulUserText = (text: string) => {
@@ -208,26 +651,89 @@ export function DailyVoiceCheckin({
     }
     lastUserTranscriptRef.current = text;
     lastUserTranscriptAtRef.current = now;
-    setTranscripts((prev) => [...prev, { role: "user", text, ts: now }]);
+    const riskMatches = detectEvidenceBasedRisks([{ role: "user", text }]);
+    const ambiguousTranscript = isAmbiguousTranscript(text);
+    const decision = decideAfterAnswer({
+      state: machineStateRef.current,
+      answerText: text,
+      riskMatches,
+      forceUnclear: ambiguousTranscript,
+    });
+    machineStateRef.current = decision.state;
+
+    const nextTranscripts = [...transcriptsRef.current, { role: "user" as const, text, ts: now }];
+    transcriptsRef.current = nextTranscripts;
+    setTranscripts(nextTranscripts);
+
+    if (!openingMemoryCheckedRef.current && openingMemoryRef.current?.id) {
+      openingMemoryCheckedRef.current = true;
+      if (/(아니|아니요|그런적없|그런 적 없|잘못|틀렸|몰라)/.test(text.replace(/\s+/g, ""))) {
+        const memoryId = openingMemoryRef.current.id;
+        void (async () => {
+          await denyCareMemoryItem({
+            data: { memoryId },
+            headers: await authHeaders(),
+          });
+        })().catch((e) => console.warn("[care-memory] 기억 부정 처리 실패", e));
+      }
+    }
+
+    if (decision.recordAnswer) {
+      const stepAnswer: CheckinStepAnswer = {
+        stepId: currentStepIdRef.current,
+        stepLabel: stepLabel(currentStepIdRef.current),
+        question: currentQuestionRef.current,
+        answer: text,
+        askedAt: currentQuestionTsRef.current,
+        answeredAt: now,
+        riskMatches,
+      };
+      const nextStepAnswers = [...stepAnswersRef.current, stepAnswer];
+      stepAnswersRef.current = nextStepAnswers;
+      setStepAnswers(nextStepAnswers);
+    }
+
+    saveDraftFromCurrentState("manual", nextTranscripts);
+
+    if (hasUrgentEvidenceRisk(riskMatches)) {
+      setUrgentNotice("긴급 확인이 필요한 표현이 기록됐어요. 보호자나 119에 바로 연락해 주세요.");
+      setMicEnabled(false);
+    }
+
+    if (decision.escalate) {
+      setUrgentNotice("긴급 확인이 필요한 표현이 기록됐어요. 보호자나 119에 바로 연락해 주세요.");
+    }
+
+    if (decision.unclear) {
+      toast("목소리 인식이 약해서 다시 확인할게요.");
+    }
+
+    if (decision.end) {
+      if (canAutoEndNow()) {
+        waitForAssistantThenAutoEnd(decision.escalate ? 15000 : 12000);
+      } else {
+        pendingAutoEndRef.current = false;
+      }
+    }
+
+    sendDirectedAssistantPrompt(decision.prompt, decision.nextStepId);
   };
 
   const handleUserTranscript = (msg: any) => {
     const text = ((msg.transcript ?? msg.text ?? msg.delta ?? "") as string).trim();
     if (!text) return;
 
-    // AI 음성이 막 끝난 직후 아주 짧은 잔향만 무시.
-    // 실제 답변까지 버리면 서버/모바일 환경에서 기록 누락이 생긴다.
-    if (isAssistantSpeakingRef.current && Date.now() - lastAssistantAudioAtRef.current < 180) return;
+    // AI 음성이 실제로 출력되는 동안 들어온 전사는 스피커 잔향/끼어들기일 가능성이 높다.
+    // 단, Realtime은 사용자 답변 직후 response.created가 먼저 오고 전사 완료가 뒤따를 수 있으므로
+    // "응답 생성 중"이라는 이유만으로 사용자 전사를 버리면 안 된다.
+    if (isAssistantSpeakingRef.current) return;
 
     if (!isMeaningfulUserText(text)) return;
 
+    setUserSpeaking(false);
     appendUserTranscript(text);
 
-    // 사용자 음성 종료 의사 감지
-    if (/그만|끊어|끊을|종료|안녕히\s*계세요|이만/.test(text) && !autoEndTriggeredRef.current) {
-      autoEndTriggeredRef.current = true;
-      setTimeout(() => endCallRef.current(), 1500);
-    }
+    // 종료 의사는 상태머신에서만 처리한다. 잘못 전사된 한 문장 때문에 즉시 끊지 않는다.
   };
 
   const handleEvent = (msg: any) => {
@@ -238,8 +744,12 @@ export function DailyVoiceCheckin({
       t === "input_audio_transcription.completed"
     ) {
       handleUserTranscript(msg);
+    } else if (t === "input_audio_buffer.speech_started" || t === "input_audio_buffer.speech_start") {
+      if (!isAssistantSpeakingRef.current) setUserSpeaking(true);
+    } else if (t === "input_audio_buffer.speech_stopped" || t === "input_audio_buffer.speech_stop") {
+      setUserSpeaking(false);
     } else if (t === "response.created") {
-      isProcessingTurnRef.current = true;
+      prepareAssistantTurn();
     } else if (t === "session.created" || t === "session.updated") {
       requestOpeningGreeting();
     } else if (
@@ -249,12 +759,7 @@ export function DailyVoiceCheckin({
       t === "response.output_audio_transcript.delta"
     ) {
       // AI 음성 출력 시작/진행 중
-      isAssistantSpeakingRef.current = true;
-      lastAssistantAudioAtRef.current = Date.now();
-      if (assistantSilenceTimerRef.current) {
-        clearTimeout(assistantSilenceTimerRef.current);
-        assistantSilenceTimerRef.current = null;
-      }
+      lockUserInputForAssistantAudio();
       if (t === "response.audio_transcript.delta" || t === "response.output_audio_transcript.delta") {
         const delta = msg.delta || "";
         setTranscripts((prev) => {
@@ -274,20 +779,21 @@ export function DailyVoiceCheckin({
         }
         return prev;
       });
-      // AI 종료 신호 감지 → 자동 종료
-      if (/통화를\s*마치겠습니다/.test(finalText) && !autoEndTriggeredRef.current) {
-        autoEndTriggeredRef.current = true;
-        // 마지막 오디오 재생을 위해 약간 대기 후 종료
-        setTimeout(() => endCallRef.current(), 2500);
+      // AI가 종료 문장을 말해도 상태머신이 충분한 기록/긴급 상태를 확인한 경우에만 종료한다.
+      if (/통화를\s*마치겠습니다/.test(finalText) && canAutoEndNow() && !autoEndTriggeredRef.current) {
+        waitForAssistantThenAutoEnd(12000);
       }
-    } else if (t === "response.done" || t === "response.audio.done" || t === "response.output_audio.done") {
-      // AI 발화가 완전히 끝나면 짧은 여유 후 입력 다시 허용
-      // (길게 막으면 사용자의 빠른 답변이 전사에서 누락된다)
-      if (assistantSilenceTimerRef.current) clearTimeout(assistantSilenceTimerRef.current);
-      assistantSilenceTimerRef.current = setTimeout(() => {
-        isAssistantSpeakingRef.current = false;
-        isProcessingTurnRef.current = false;
-      }, 220);
+    } else if (
+      t === "response.done" ||
+      t === "response.audio.done" ||
+      t === "response.output_audio.done" ||
+      t === "output_audio_buffer.stopped"
+    ) {
+      // AI 발화가 완전히 끝나고 잔향이 사라진 뒤 사용자 입력을 다시 연다.
+      unlockUserInputAfterAssistant(700);
+      if (pendingAutoEndRef.current) {
+        scheduleAutoEnd(3200);
+      }
     } else if (t === "error") {
       const errMsg = (msg.error?.message ?? "") as string;
       // OpenAI Realtime 의 경쟁 상태(race) 에러 — 첫 응답은 정상 진행 중이고
@@ -306,10 +812,20 @@ export function DailyVoiceCheckin({
     const dc = dcRef.current;
     if (!dc || dc.readyState !== "open" || openingGreetingSentRef.current || !remoteReadyRef.current) return;
     openingGreetingSentRef.current = true;
+    const resumeStepId = draft?.currentStepId ?? currentStepIdRef.current;
+    const prompt = draft
+      ? `이어서 여쭤볼게요. ${getPlannedStepById(resumeStepId, questionPlanRef.current).prompt}`
+      : getOpeningPrompt(nickname, null, questionPlanRef.current);
+    rememberAssistantQuestion(resumeStepId, prompt, Date.now());
+    prepareAssistantTurn();
     dc.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: "지금 먼저 따뜻하게 첫인사를 건네고, 오늘 식사는 하셨는지 한 문장으로 물어보세요.",
+        instructions: [
+          "아래 문장만 따뜻하고 또박또박 말하세요.",
+          "다른 질문을 덧붙이지 말고, 사용자의 답변을 기다리세요.",
+          `문장: ${prompt}`,
+        ].join("\n"),
       },
     }));
   };
@@ -358,18 +874,36 @@ export function DailyVoiceCheckin({
     setError(null);
     const resumeContext = buildResumeContext();
     if (!draft) setTranscripts([]);
+    if (!draft) setStepAnswers([]);
+    setUrgentNotice(null);
+    setShowConversationReview(false);
     setResult(null);
     setStatus("connecting");
+    setTurnState("idle");
     autoEndTriggeredRef.current = false;
+    pendingAutoEndRef.current = false;
     openingGreetingSentRef.current = false;
+    openingMemoryCheckedRef.current = false;
     remoteReadyRef.current = false;
+    currentQuestionTsRef.current = undefined;
     startedAtRef.current = draft?.startedAt ?? Date.now();
+    resetAudioQualityStats();
     void trackEvent({
       eventName: ANALYTICS_EVENTS.VOICE_CHECK_STARTED,
       userRole: "senior",
       targetType: "health_checkin",
     });
     try {
+      startDraftAutosave();
+      openingMemoryRef.current = draft
+        ? null
+        : await getCheckinOpeningMemory({ headers: await authHeaders() });
+      questionPlanRef.current = draft?.questionPlan?.length
+        ? draft.questionPlan
+        : buildCheckinQuestionPlan(new Date(), openingMemoryRef.current);
+      machineStateRef.current = createInitialCheckinState(draft?.currentStepId ?? "Q1_MEAL", questionPlanRef.current);
+      currentStepIdRef.current = draft?.currentStepId ?? "Q1_MEAL";
+      currentQuestionRef.current = draft?.lastQuestion ?? getPlannedStepById("Q1_MEAL", questionPlanRef.current).prompt;
       const session = await createRealtimeSession({
         data: {
           personaName: nickname,
@@ -393,9 +927,14 @@ export function DailyVoiceCheckin({
         })
         .catch(async () => navigator.mediaDevices.getUserMedia({ audio: true }));
       localStreamRef.current = localStream;
+      startMicSignalSampling(localStream);
+      mutedRef.current = false;
+      setMuted(false);
+      setMicEnabled(false);
 
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
+      startAudioQualitySampling();
       const remoteAudio = ensureRemoteAudioElement();
 
       // 네트워크 단절·서버측 종료 등으로 PeerConnection이 끊기면 자동 저장 흐름으로 진입
@@ -463,6 +1002,9 @@ export function DailyVoiceCheckin({
       console.error(e);
       setError(e.message || String(e));
       setStatus("idle");
+      void recordQuality("failed", { draftReason: "connect_failed" }).catch((err) =>
+        console.warn("[checkin-quality] failed event failed", err),
+      );
       cleanup();
       toast.error("통화를 시작할 수 없어요");
     }
@@ -471,12 +1013,16 @@ export function DailyVoiceCheckin({
   const endCall = () => {
     autoEndTriggeredRef.current = true;
     cleanup();
-    const finalTranscripts = transcripts.filter((t) => t.text.trim().length > 0);
+    const finalTranscripts = transcriptsRef.current.filter((t) => t.text.trim().length > 0);
     const durationSec = startedAtRef.current
       ? Math.round((Date.now() - startedAtRef.current) / 1000)
       : 0;
 
     if (finalTranscripts.length < 2) {
+      void recordQuality("too_short", {
+        durationSec,
+        transcripts: finalTranscripts,
+      }).catch((e) => console.warn("[checkin-quality] too_short event failed", e));
       clearCheckinCallDraft();
       setDraft(null);
       setStatus("ended");
@@ -489,6 +1035,9 @@ export function DailyVoiceCheckin({
 
     queueCheckinSave({
       transcript: finalTranscripts.map((t) => ({ role: t.role, text: t.text })),
+      stepAnswers: stepAnswersRef.current.length
+        ? stepAnswersRef.current
+        : buildCheckinStepAnswers(finalTranscripts),
       durationSec,
       shareWithGuardian: true,
     })
@@ -499,6 +1048,14 @@ export function DailyVoiceCheckin({
         setResult(res);
         setStatus("ended");
         onAnalyzed?.(res);
+        void recordQuality("completed", {
+          checkinId: res.checkin?.id ?? null,
+          durationSec,
+          transcripts: finalTranscripts,
+          stepAnswers: stepAnswersRef.current.length
+            ? stepAnswersRef.current
+            : buildCheckinStepAnswers(finalTranscripts),
+        }).catch((e) => console.warn("[checkin-quality] completed event failed", e));
         void trackEvent({
           eventName: ANALYTICS_EVENTS.VOICE_CHECK_COMPLETED,
           userRole: "senior",
@@ -528,6 +1085,11 @@ export function DailyVoiceCheckin({
         saveDraftFromCurrentState("manual", finalTranscripts);
         setStatus("idle");
         toast.error("저장에 실패해서 통화를 일시저장했어요. 잠시 후 이어서 저장할 수 있어요.");
+        void recordQuality("failed", {
+          durationSec,
+          transcripts: finalTranscripts,
+          draftReason: "save_failed",
+        }).catch((err) => console.warn("[checkin-quality] failed event failed", err));
         void trackEvent({
           eventName: ANALYTICS_EVENTS.VOICE_CHECK_FAILED,
           userRole: "senior",
@@ -553,8 +1115,9 @@ export function DailyVoiceCheckin({
     const stream = localStreamRef.current;
     const track = stream?.getAudioTracks()[0];
     if (!track) return;
-    track.enabled = !track.enabled;
-    setMuted(!track.enabled);
+    mutedRef.current = !mutedRef.current;
+    track.enabled = !mutedRef.current && !isAssistantSpeakingRef.current && !isProcessingTurnRef.current;
+    setMuted(mutedRef.current);
   };
 
   const discardDraft = () => {
@@ -563,6 +1126,40 @@ export function DailyVoiceCheckin({
     setTranscripts([]);
     startedAtRef.current = null;
     toast("일시저장된 통화를 지웠어요.");
+  };
+
+  const saveReviewCorrections = async (answers: CheckinStepAnswer[]) => {
+    if (answers.length === 0) return;
+    setReviewSaving(true);
+    try {
+      const res = await amendTodayCheckinReview({
+        headers: await authHeaders(),
+        data: {
+          stepAnswers: answers.map((answer) => ({
+            stepId: answer.stepId,
+            stepLabel: answer.stepLabel,
+            question: answer.question,
+            answer: answer.answer,
+            answeredAt: answer.answeredAt,
+          })),
+        },
+      } as Parameters<typeof amendTodayCheckinReview>[0]);
+      const next = res as AnalyzeResult;
+      setStepAnswers(answers);
+      setResult(next);
+      onAnalyzed?.(next);
+      void recordQuality("review_corrected", {
+        checkinId: next.checkin?.id ?? null,
+        stepAnswers: answers,
+        correctionCount: answers.length,
+      }).catch((err) => console.warn("[checkin-quality] correction event failed", err));
+      toast.success("수정한 내용까지 다시 저장했어요.");
+    } catch (e) {
+      console.error("[checkin-review] correction failed", e);
+      toast.error(e instanceof Error ? e.message : "수정 저장에 실패했어요.");
+    } finally {
+      setReviewSaving(false);
+    }
   };
 
   // 최신 endCall 함수를 ref에 동기화 (자동 종료 타이머에서 사용)
@@ -697,6 +1294,15 @@ export function DailyVoiceCheckin({
             </p>
           </div>
 
+          <CheckinStepReview
+            answers={stepAnswers}
+            showConversation={showConversationReview}
+            onToggleConversation={() => setShowConversationReview((v) => !v)}
+            transcripts={transcripts.filter((t) => t.text.trim().length > 0 && !t.partial)}
+            saving={reviewSaving}
+            onSave={saveReviewCorrections}
+          />
+
           <NextCallNotice />
 
           {error && (
@@ -738,6 +1344,31 @@ export function DailyVoiceCheckin({
             </span>
           </header>
 
+          <div className="border-b border-border/30 bg-background/55 px-4 py-3 text-center backdrop-blur">
+            <p
+              className={cn(
+                "mx-auto max-w-2xl rounded-2xl px-4 py-3 text-base font-bold",
+                turnState === "ai_speaking"
+                  ? "bg-primary/10 text-primary"
+                  : turnState === "user_can_speak"
+                    ? "bg-sage/15 text-sage"
+                    : "bg-muted text-foreground/65",
+              )}
+            >
+              {turnState === "ai_speaking" && "AI가 말하고 있어요. 끝나면 말씀해 주세요."}
+              {turnState === "user_can_speak" && (userSpeaking ? "말씀을 듣고 있어요. 기록 중이에요." : "지금 말씀해 주세요. 끝까지 듣고 기록할게요.")}
+              {turnState === "idle" && "통화를 준비하고 있어요."}
+            </p>
+            {urgentNotice && (
+              <div className="mx-auto mt-3 max-w-2xl rounded-2xl border-2 border-destructive/50 bg-destructive/10 px-4 py-3 text-left shadow-soft">
+                <p className="text-base font-bold text-destructive">긴급 확인 필요</p>
+                <p className="mt-1 text-sm font-semibold leading-relaxed text-destructive/90">
+                  {urgentNotice}
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* 채팅 영역 — 화면 대부분을 차지 */}
           <div className="flex-1 overflow-y-auto px-4 py-5">
             {transcripts.length === 0 ? (
@@ -765,6 +1396,18 @@ export function DailyVoiceCheckin({
                     </div>
                   </div>
                 ))}
+                {userSpeaking && (
+                  <div className="flex justify-end">
+                    <div className="max-w-[85%] rounded-2xl bg-primary/90 px-4 py-3 text-fluid-base font-bold leading-relaxed text-primary-foreground shadow-soft">
+                      <span className="mr-2 align-middle">말씀 기록 중</span>
+                      <span className="inline-flex items-end gap-1 align-middle" aria-hidden>
+                        <span className="h-2 w-1.5 animate-[pulse_0.8s_ease-in-out_infinite] rounded-full bg-current opacity-70" />
+                        <span className="h-3 w-1.5 animate-[pulse_0.8s_ease-in-out_0.12s_infinite] rounded-full bg-current opacity-80" />
+                        <span className="h-2.5 w-1.5 animate-[pulse_0.8s_ease-in-out_0.24s_infinite] rounded-full bg-current opacity-70" />
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <div ref={transcriptEndRef} />
               </div>
             )}
@@ -953,6 +1596,207 @@ export function DailyVoiceCheckin({
       )}
 
     </div>
+  );
+}
+
+function CheckinStepReview({
+  answers,
+  transcripts,
+  showConversation,
+  onToggleConversation,
+  saving,
+  onSave,
+}: {
+  answers: CheckinStepAnswer[];
+  transcripts: Transcript[];
+  showConversation: boolean;
+  onToggleConversation: () => void;
+  saving: boolean;
+  onSave: (answers: CheckinStepAnswer[]) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftAnswers, setDraftAnswers] = useState<CheckinStepAnswer[]>(answers);
+
+  useEffect(() => {
+    if (!editing) setDraftAnswers(answers);
+  }, [answers, editing]);
+
+  const visibleAnswers = answers.filter((answer) => answer.answer.trim().length > 0);
+  const editableAnswers = draftAnswers.filter((answer) => answer.answer.trim().length > 0);
+  const displayAnswers = editing ? editableAnswers : visibleAnswers;
+  const urgentCount = visibleAnswers.reduce(
+    (sum, answer) => sum + answer.riskMatches.filter((risk) => risk.severity === "urgent").length,
+    0,
+  );
+
+  if (visibleAnswers.length === 0 && transcripts.length === 0) return null;
+
+  return (
+    <section className="w-full rounded-[1.5rem] border border-border/70 bg-background/90 p-4 text-left shadow-soft">
+      <div className="flex items-start gap-3">
+        <span
+          className={cn(
+            "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl",
+            urgentCount > 0 ? "bg-destructive/10 text-destructive" : "bg-sage/15 text-sage",
+          )}
+        >
+          {urgentCount > 0 ? <AlertTriangle className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-display text-lg font-bold text-foreground">오늘 이렇게 기록했어요</p>
+          <p className="mt-1 text-sm leading-relaxed text-foreground/60">
+            질문별 답변과 위험 근거를 함께 저장했어요. 보호자에게는 원문과 근거가 전달돼요.
+          </p>
+        </div>
+      </div>
+
+      {urgentCount > 0 && (
+        <div className="mt-4 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3">
+          <p className="text-sm font-bold text-destructive">긴급 확인 표현 {urgentCount}건</p>
+          <p className="mt-1 text-sm leading-relaxed text-destructive/90">
+            쇼크, 호흡 곤란, 의식 저하 같은 표현은 출처 기반 근거와 함께 보호자 확인 대상으로 기록돼요.
+          </p>
+        </div>
+      )}
+
+      {displayAnswers.length > 0 && (
+        <ul className="mt-4 space-y-2.5">
+          {displayAnswers.map((answer, index) => {
+            const hasRisk = answer.riskMatches.length > 0;
+            return (
+              <li
+                key={`${answer.stepId}-${answer.answeredAt}-${index}`}
+                className={cn(
+                  "rounded-2xl border px-4 py-3",
+                  hasRisk ? "border-destructive/30 bg-destructive/5" : "border-border/60 bg-surface/60",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-foreground/50">{answer.stepLabel}</p>
+                  {hasRisk && (
+                    <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-bold text-destructive">
+                      확인 필요
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-sm leading-relaxed text-foreground/60">
+                  {answer.question}
+                </p>
+                {editing ? (
+                  <textarea
+                    value={answer.answer}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setDraftAnswers((prev) =>
+                        prev.map((item) =>
+                          item.answeredAt === answer.answeredAt && item.stepId === answer.stepId
+                            ? { ...item, answer: next }
+                            : item,
+                        ),
+                      );
+                    }}
+                    className="mt-2 min-h-20 w-full resize-none rounded-2xl border border-border bg-background px-3 py-2 text-base font-bold leading-relaxed text-foreground outline-none focus:border-primary"
+                    aria-label={`${answer.stepLabel} 답변 수정`}
+                  />
+                ) : (
+                  <p className="mt-2 text-base font-bold leading-relaxed text-foreground">
+                    {answer.answer}
+                  </p>
+                )}
+                {hasRisk && (
+                  <div className="mt-2 space-y-1">
+                    {answer.riskMatches.map((risk) => (
+                      <p key={`${risk.category}-${risk.matchedTerms.join(",")}`} className="text-xs font-semibold leading-relaxed text-destructive/90">
+                        근거: {risk.matchedTerms.join(", ")} · {risk.sources.map((s) => s.name).join(", ")}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {visibleAnswers.length > 0 && (
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {editing ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setDraftAnswers(answers);
+                  setEditing(false);
+                }}
+                disabled={saving}
+                className="rounded-full border border-border bg-background px-4 py-3 text-sm font-bold text-foreground/70 disabled:opacity-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const cleaned = draftAnswers
+                    .map((answer) => ({ ...answer, answer: answer.answer.trim() }))
+                    .filter((answer) => answer.answer.length > 0);
+                  await onSave(cleaned);
+                  setEditing(false);
+                }}
+                disabled={saving}
+                className="rounded-full bg-primary px-4 py-3 text-sm font-bold text-primary-foreground disabled:opacity-50"
+              >
+                {saving ? "저장 중…" : "수정 저장"}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setDraftAnswers(answers);
+                setEditing(true);
+              }}
+              className="col-span-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-3 text-sm font-bold text-primary"
+            >
+              잘못 기록된 답변 수정하기
+            </button>
+          )}
+        </div>
+      )}
+
+      {transcripts.length > 0 && (
+        <div className="mt-4 border-t border-border/60 pt-3">
+          <button
+            type="button"
+            onClick={onToggleConversation}
+            className="flex w-full items-center justify-center gap-1.5 rounded-full bg-surface px-4 py-2.5 text-sm font-bold text-foreground/70"
+            aria-expanded={showConversation}
+          >
+            원문 대화 {showConversation ? "접기" : "보기"}
+            <ChevronDown className={cn("h-4 w-4 transition-transform", showConversation && "rotate-180")} />
+          </button>
+          {showConversation && (
+            <div className="mt-3 max-h-72 space-y-2 overflow-y-auto rounded-2xl bg-surface/70 p-3">
+              {transcripts.map((turn, index) => (
+                <div
+                  key={`${turn.ts}-${index}`}
+                  className={cn(
+                    "rounded-2xl px-3 py-2 text-sm leading-relaxed",
+                    turn.role === "ai"
+                      ? "bg-background text-foreground/75"
+                      : "bg-primary text-primary-foreground",
+                  )}
+                >
+                  <span className="mb-0.5 block text-[11px] font-bold opacity-70">
+                    {turn.role === "ai" ? "AI" : "나"}
+                  </span>
+                  {turn.text}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -25,7 +25,6 @@ import {
   type CarouselApi,
 } from "@/components/ui/carousel";
 import { RecommendationCarousel } from "@/components/checkin/RecommendationCarousel";
-import { BadgesSection } from "@/components/settings/BadgesSection";
 import { authHeaders } from "@/lib/auth/server-fn-headers";
 import { cn } from "@/lib/utils";
 import {
@@ -412,8 +411,6 @@ function DetailsBody({
           })}
         </div>
       </div>
-
-      <BadgesSection />
     </>
   );
 }

@@ -1021,6 +1021,199 @@ export type Database = {
           },
         ]
       }
+      care_memory_items: {
+        Row: {
+          confidence: number
+          content: string
+          created_at: string
+          denied_at: string | null
+          evidence_checkin_id: string | null
+          evidence_turn_id: string | null
+          id: string
+          last_confirmed_at: string | null
+          last_observed_at: string
+          memory_type: string
+          normalized_key: string
+          observation_count: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          confidence?: number
+          content: string
+          created_at?: string
+          denied_at?: string | null
+          evidence_checkin_id?: string | null
+          evidence_turn_id?: string | null
+          id?: string
+          last_confirmed_at?: string | null
+          last_observed_at?: string
+          memory_type: string
+          normalized_key: string
+          observation_count?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          confidence?: number
+          content?: string
+          created_at?: string
+          denied_at?: string | null
+          evidence_checkin_id?: string | null
+          evidence_turn_id?: string | null
+          id?: string
+          last_confirmed_at?: string | null
+          last_observed_at?: string
+          memory_type?: string
+          normalized_key?: string
+          observation_count?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "care_memory_items_evidence_checkin_id_fkey"
+            columns: ["evidence_checkin_id"]
+            isOneToOne: false
+            referencedRelation: "health_checkins"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "care_memory_items_evidence_turn_id_fkey"
+            columns: ["evidence_turn_id"]
+            isOneToOne: false
+            referencedRelation: "health_checkin_turns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      checkin_quality_events: {
+        Row: {
+          assistant_turn_count: number
+          audio_stats: Json
+          checkin_id: string | null
+          completed_step_count: number
+          correction_count: number
+          created_at: string
+          draft_reason: string | null
+          duration_sec: number
+          expected_step_count: number
+          id: string
+          issue_flags: string[]
+          missing_step_ids: string[]
+          resumed_from_draft: boolean
+          status: string
+          transcript_turn_count: number
+          urgent_detected: boolean
+          user_id: string
+          user_turn_count: number
+        }
+        Insert: {
+          assistant_turn_count?: number
+          audio_stats?: Json
+          checkin_id?: string | null
+          completed_step_count?: number
+          correction_count?: number
+          created_at?: string
+          draft_reason?: string | null
+          duration_sec?: number
+          expected_step_count?: number
+          id?: string
+          issue_flags?: string[]
+          missing_step_ids?: string[]
+          resumed_from_draft?: boolean
+          status: string
+          transcript_turn_count?: number
+          urgent_detected?: boolean
+          user_id: string
+          user_turn_count?: number
+        }
+        Update: {
+          assistant_turn_count?: number
+          audio_stats?: Json
+          checkin_id?: string | null
+          completed_step_count?: number
+          correction_count?: number
+          created_at?: string
+          draft_reason?: string | null
+          duration_sec?: number
+          expected_step_count?: number
+          id?: string
+          issue_flags?: string[]
+          missing_step_ids?: string[]
+          resumed_from_draft?: boolean
+          status?: string
+          transcript_turn_count?: number
+          urgent_detected?: boolean
+          user_id?: string
+          user_turn_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "checkin_quality_events_checkin_id_fkey"
+            columns: ["checkin_id"]
+            isOneToOne: false
+            referencedRelation: "health_checkins"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      health_checkin_turns: {
+        Row: {
+          ai_question: string
+          checkin_id: string
+          corrected_answer: string | null
+          corrected_at: string | null
+          created_at: string
+          id: string
+          risk_matches: Json
+          source_transcript_index: number | null
+          step_id: string
+          step_label: string
+          turn_index: number
+          updated_at: string
+          user_answer: string
+        }
+        Insert: {
+          ai_question: string
+          checkin_id: string
+          corrected_answer?: string | null
+          corrected_at?: string | null
+          created_at?: string
+          id?: string
+          risk_matches?: Json
+          source_transcript_index?: number | null
+          step_id: string
+          step_label: string
+          turn_index: number
+          updated_at?: string
+          user_answer: string
+        }
+        Update: {
+          ai_question?: string
+          checkin_id?: string
+          corrected_answer?: string | null
+          corrected_at?: string | null
+          created_at?: string
+          id?: string
+          risk_matches?: Json
+          source_transcript_index?: number | null
+          step_id?: string
+          step_label?: string
+          turn_index?: number
+          updated_at?: string
+          user_answer?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "health_checkin_turns_checkin_id_fkey"
+            columns: ["checkin_id"]
+            isOneToOne: false
+            referencedRelation: "health_checkins"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       health_checkins: {
         Row: {
           caregiver_shared: boolean

@@ -119,10 +119,10 @@ function SeniorHome() {
     [],
   );
 
-  const userInitial = (user?.nickname?.[0] ?? "곁").toUpperCase();
   const checkin = today?.checkin;
   const report = today?.report;
   const recommendations = today?.recommendations ?? [];
+  const turns = today?.turns ?? [];
 
   const mood = moodMeta(checkin?.mood_status);
   const meal = mealMeta((checkin as any)?.meal_status);
@@ -145,8 +145,8 @@ function SeniorHome() {
       {/* ─────────────────────────────────────────────────────────
        * 1. 헤더 — 인사 + 날짜 + 아바타 (목업 ScreenHome 스타일)
        * ─────────────────────────────────────────────────────────*/}
-      <section className="flex items-start justify-between gap-3 px-1 pt-1 animate-rise-in">
-        <div className="min-w-0 flex-1">
+      <section className="px-1 pt-1 animate-rise-in">
+        <div className="min-w-0">
           <p className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-primary">
             <Calendar className="h-3 w-3" /> {dateLabel}
           </p>
@@ -154,9 +154,6 @@ function SeniorHome() {
             {greeting},<br />
             <span className="text-primary">{user?.nickname ?? "어머님"}</span>님 👋
           </h1>
-        </div>
-        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-rose-soft to-amber-soft text-lg font-bold text-primary shadow-soft">
-          {userInitial}
         </div>
       </section>
 
@@ -357,9 +354,9 @@ function SeniorHome() {
         </nav>
 
         {tab === "today" && checkinDone && (
-          <p className="mt-6 px-2 text-center text-sm text-foreground/55">
-            오늘 안부 통화를 잘 마치셨어요 🌷
-          </p>
+          <div className="mt-4" role="tabpanel">
+            <TodayTurnList turns={turns as any[]} />
+          </div>
         )}
 
         {tab === "week" && (
@@ -387,5 +384,58 @@ function SeniorHome() {
         )}
       </section>
     </SeniorAppLayout>
+  );
+}
+
+function TodayTurnList({
+  turns,
+}: {
+  turns: Array<{
+    id: string;
+    step_label: string;
+    ai_question: string;
+    user_answer: string;
+    corrected_answer?: string | null;
+    corrected_at?: string | null;
+  }>;
+}) {
+  if (turns.length === 0) {
+    return (
+      <p className="mt-6 px-2 text-center text-sm text-foreground/55">
+        오늘 안부 통화를 잘 마치셨어요.
+      </p>
+    );
+  }
+
+  return (
+    <section className="rounded-2xl border border-border/70 bg-background p-5 shadow-soft">
+      <div className="flex items-center gap-2">
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <MessageCircleHeart className="h-4 w-4" />
+        </span>
+        <div>
+          <h3 className="font-display text-base font-bold text-foreground">오늘 대화 기록</h3>
+          <p className="text-xs font-medium text-muted-foreground">질문별로 저장된 답변이에요</p>
+        </div>
+      </div>
+
+      <div className="mt-4 divide-y divide-border/60">
+        {turns.map((turn) => {
+          const answer = turn.corrected_answer || turn.user_answer;
+          return (
+            <article key={turn.id} className="py-4 first:pt-0 last:pb-0">
+              <p className="text-xs font-bold text-primary">{turn.step_label}</p>
+              <p className="mt-1 text-sm leading-relaxed text-foreground/65">{turn.ai_question}</p>
+              <p className="mt-2 rounded-xl bg-surface px-4 py-3 text-base font-semibold leading-relaxed text-foreground">
+                {answer}
+              </p>
+              {turn.corrected_at && (
+                <p className="mt-1.5 text-xs font-medium text-muted-foreground">수정 반영됨</p>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }

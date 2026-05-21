@@ -9,10 +9,6 @@ import { useAuth } from "@/lib/auth/mock-auth";
 
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Search,
-  Clock,
-  Flame,
-  TrendingUp,
   LogIn,
   Lock,
   MapPin,
@@ -22,7 +18,6 @@ import {
   ChevronDown,
   SlidersHorizontal,
   MessageCircleHeart,
-  PenLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WalkLeaderboard } from "@/components/engagement/WalkLeaderboard";
@@ -41,7 +36,6 @@ export const Route = createFileRoute("/community/")({
   component: CommunityIndex,
 });
 
-type Sort = "recent" | "hot" | "trending";
 type Scope = "local" | "all";
 
 function CommunityIndex() {
@@ -79,11 +73,8 @@ function CommunityIndex() {
     if (userSigungu) setScope("local");
   }, [userSigungu]);
   const [activeCat, setActiveCat] = useState<CategorySlug | "all">("all");
-  const [sort, setSort] = useState<Sort>("recent");
   const [allPosts, setAllPosts] = useState<Post[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [query, setQuery] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
     listPosts({ data: activeCat === "all" ? {} : { category: activeCat } })
@@ -102,18 +93,10 @@ function CommunityIndex() {
     if (scope === "local" && userSigungu) {
       arr = arr.filter((p) => (p.region_sigungu ?? p.author?.sigungu) === userSigungu);
     }
-    if (query.trim()) {
-      const q = query.trim().toLowerCase();
-      arr = arr.filter(
-        (p) => p.title.toLowerCase().includes(q) || p.body.toLowerCase().includes(q),
-      );
-    }
     const sorted = [...arr];
-    if (sort === "hot") sorted.sort((a, b) => b.likes - a.likes);
-    else if (sort === "trending") sorted.sort((a, b) => b.views - a.views);
     sorted.sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
     return sorted;
-  }, [allPosts, sort, scope, userSigungu, query]);
+  }, [allPosts, scope, userSigungu]);
 
   const totalCount = useMemo(
     () => Object.values(counts).reduce((s, n) => s + n, 0),
@@ -129,10 +112,10 @@ function CommunityIndex() {
 
   return (
     <SeniorAppLayout>
-      {/* Header — 시니어용 큰 안내 + 글쓰기 */}
-      <section className="bg-background">
-        <div className="mx-auto w-full max-w-3xl px-4 pt-4 pb-5 sm:px-6">
-          <div className="rounded-3xl bg-gradient-to-br from-rose-soft/80 via-background to-sage-soft/70 p-5 shadow-soft">
+      {/* Header — 동네정보와 같은 상단 여백으로 정리 */}
+      <section>
+        <div className="mx-auto w-full max-w-3xl">
+          <div className="rounded-3xl bg-gradient-to-br from-rose-soft/80 via-background to-sage-soft/70 px-5 py-6 shadow-soft">
             <p className="inline-flex items-center gap-2 rounded-full bg-background/85 px-3 py-1 text-sm font-bold text-primary">
               <MessageCircleHeart className="h-4 w-4" />
               이야기방
@@ -143,12 +126,6 @@ function CommunityIndex() {
             <p className="mt-2 text-lg leading-relaxed text-foreground/70">
               동네 소식, 생활 질문, 좋은 정보를 큰 글씨로 볼 수 있어요.
             </p>
-            <Button asChild size="lg" variant="hero" className="mt-5 h-14 w-full rounded-full text-lg font-bold">
-              <Link to="/community/write">
-                <PenLine className="mr-2 h-5 w-5" />
-                글쓰기
-              </Link>
-            </Button>
           </div>
 
           {/* 동네/전국 — 전국 먼저, 동네 두 번째 */}
@@ -292,58 +269,14 @@ function CommunityIndex() {
         </div>
       </section>
 
-      {/* Toolbar — 정렬·검색 */}
-      <section className="mx-auto w-full max-w-3xl px-4 sm:px-6">
-        <div className="mt-2 rounded-2xl border border-border/70 bg-background p-3 shadow-soft">
-          <div className="grid grid-cols-3 gap-2">
-            <SortBtn active={sort === "recent"} onClick={() => setSort("recent")} icon={<Clock className="h-5 w-5" />}>
-              최신
-            </SortBtn>
-            <SortBtn active={sort === "hot"} onClick={() => setSort("hot")} icon={<Flame className="h-5 w-5" />}>
-              인기
-            </SortBtn>
-            <SortBtn active={sort === "trending"} onClick={() => setSort("trending")} icon={<TrendingUp className="h-5 w-5" />}>
-              주목
-            </SortBtn>
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-2 text-sm text-muted-foreground">
-            <span className="rounded-full bg-muted px-3 py-1.5 font-bold text-foreground/80">
-              {scope === "local" && userSigungu ? userSigungu : "전국"} · {activeCatLabel}
-            </span>
-            <button
-              type="button"
-              onClick={() => setSearchOpen((o) => !o)}
-              className={cn(
-                "inline-flex h-11 w-11 items-center justify-center rounded-full border transition-colors",
-                searchOpen
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-background text-foreground hover:border-primary/40",
-              )}
-              aria-label="검색"
-            >
-              <Search className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-        {searchOpen && (
-          <div className="py-3">
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="제목·내용 검색"
-              className="w-full rounded-2xl border-2 border-border bg-background px-5 py-4 text-lg focus:border-primary focus:outline-none"
-            />
-          </div>
-        )}
-
-        {/* Feed */}
+      {/* Feed */}
+      <section className="mx-auto mt-5 w-full max-w-3xl">
         {!isAuthenticated ? (
           <LoginGate previewPosts={filtered} />
         ) : filtered.length === 0 ? (
           <EmptyState scope={scope} sigungu={userSigungu} onSwitchAll={() => setScope("all")} />
         ) : (
-          <ul className="space-y-3 pb-16 pt-4">
+          <ul className="space-y-3 pb-16">
             {filtered.map((p) => (
               <li key={p.id}>
                 <PostRow post={p} showRegion />
@@ -396,34 +329,6 @@ function CatTile({
           {count.toLocaleString()}
         </span>
       )}
-    </button>
-  );
-}
-
-function SortBtn({
-  active,
-  onClick,
-  icon,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex min-h-12 items-center justify-center gap-1.5 rounded-xl border px-3 text-base font-bold transition-colors",
-        active
-          ? "border-primary bg-primary text-primary-foreground shadow-sm"
-          : "border-border bg-surface text-foreground/70 hover:text-foreground",
-      )}
-    >
-      {icon}
-      {children}
     </button>
   );
 }

@@ -8,6 +8,7 @@
  */
 
 export type KeywordCategory =
+  | "shock" // 쇼크 직접 언급 또는 쇼크 의심 증상
   | "fall" // 낙상
   | "chest_pain" // 가슴통증
   | "breathing" // 호흡곤란
@@ -27,6 +28,13 @@ export interface KeywordRule {
 }
 
 export const KEYWORD_RULES: KeywordRule[] = [
+  // 쇼크 직접 언급 또는 쇼크 출처 기반 증상 묶음(단일 경미 증상만으로는 escalate 하지 않음)
+  {
+    category: "shock",
+    pattern: /(쇼크|shock)|(식은땀.{0,24}창백|창백.{0,24}식은땀)|(숨.{0,10}(가쁘|얕|차).{0,24}(창백|식은땀|실신|기절))|((실신|기절|의식이?\s*(없|혼미|흐릿)).{0,24}(창백|식은땀|숨.{0,10}(가쁘|얕|차)))/i,
+    escalate: true,
+  },
+
   // 낙상
   { category: "fall", pattern: /(넘어졌|쓰러졌|미끄러졌|낙상)/, escalate: true },
 

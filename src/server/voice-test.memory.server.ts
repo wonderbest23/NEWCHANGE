@@ -18,12 +18,14 @@ export async function buildAiMemoryContext(token: string | null): Promise<string
     const todayStartISO = new Date(`${kstDate}T00:00:00+09:00`).toISOString();
 
     const { data, error } = await supabaseAdmin
-      .from("health_checkins")
-      .select("checkin_at, summary, condition_level, mood_status")
-      .eq("senior_user_id", userId)
-      .lt("checkin_at", todayStartISO)
-      .not("summary", "is", null)
-      .order("checkin_at", { ascending: false })
+      .from("care_memory_items")
+      .select("content, confidence, observation_count, last_observed_at")
+      .eq("user_id", userId)
+      .is("denied_at", null)
+      .lt("last_observed_at", todayStartISO)
+      .gte("confidence", 0.6)
+      .order("last_observed_at", { ascending: false })
+      .order("confidence", { ascending: false })
       .limit(3);
 
     if (error || !data || data.length === 0) return "";
@@ -35,10 +37,10 @@ export async function buildAiMemoryContext(token: string | null): Promise<string
     });
     const lines = data
       .map((r) => {
-        const when = r.checkin_at ? fmt.format(new Date(r.checkin_at)) : "최근";
-        const s = (r.summary ?? "").toString().trim().slice(0, 140);
+        const when = r.last_observed_at ? fmt.format(new Date(r.last_observed_at)) : "최근";
+        const s = (r.content ?? "").toString().trim().slice(0, 140);
         if (!s) return null;
-        return `- ${when}: ${s}`;
+        return `- ${when}: ${s} (확인 ${r.observation_count ?? 1}회)`;
       })
       .filter(Boolean)
       .join("\n");

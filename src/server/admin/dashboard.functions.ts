@@ -25,6 +25,20 @@ export interface AdminDashboardRecent {
 export interface AdminDashboardData {
   stats: { seniors: number; todayCheckins: number; weekCheckins: number; urgentOpen: number };
   byLevel: { good: number; normal: number; caution: number; urgent: number };
+  quality: {
+    totalEvents: number;
+    completedCalls: number;
+    failedCalls: number;
+    draftSaved: number;
+    correctionEvents: number;
+    avgStepCompletionPct: number;
+    missingStepEventPct: number;
+    urgentQualityEvents: number;
+    avgJitterMs: number | null;
+    avgRttMs: number | null;
+    packetLossEvents: number;
+    topIssueFlags: { flag: string; count: number }[];
+  };
   recent: AdminDashboardRecent[];
   seoulDistricts: { name: string; count: number }[];
   otherCount: number;
@@ -68,7 +82,7 @@ export const getAdminDashboard = createServerFn({ method: "GET" })
     const todayStartKST = startOfTodayKST();
     const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
 
-    const [seniorsRes, todayRes, weekRes, urgentRes, weekRowsRes, recentRes, profilesRes] =
+    const [seniorsRes, todayRes, weekRes, urgentRes, weekRowsRes, recentRes, profilesRes, qualityRes] =
       await Promise.all([
         supabaseAdmin.from("care_recipients").select("*", { count: "exact", head: true }),
         supabaseAdmin
@@ -93,6 +107,10 @@ export const getAdminDashboard = createServerFn({ method: "GET" })
           .order("checkin_at", { ascending: false })
           .limit(8),
         supabaseAdmin.from("profiles").select("id, region_sido, region_sigungu"),
+        supabaseAdmin
+          .from("checkin_quality_events")
+          .select("status, expected_step_count, completed_step_count, missing_step_ids, correction_count, urgent_detected, issue_flags, audio_stats, created_at")
+          .gte("created_at", weekAgo),
       ]);
 
     const byLevel = { good: 0, normal: 0, caution: 0, urgent: 0 };
@@ -152,6 +170,52 @@ export const getAdminDashboard = createServerFn({ method: "GET" })
       if (lvl === "urgent" || c.urgent_detected) s.urgent += 1;
     }
 
+    const qualityRows = (qualityRes.data ?? []) as Array<{
+      status: string | null;
+      expected_step_count: number | null;
+      completed_step_count: number | null;
+      missing_step_ids: string[] | null;
+      correction_count: number | null;
+      urgent_detected: boolean | null;
+      issue_flags: string[] | null;
+      audio_stats: Record<string, unknown> | null;
+    }>;
+    const flagCounts = new Map<string, number>();
+    let stepPctSum = 0;
+    let stepPctN = 0;
+    let missingEvents = 0;
+    let jitterSum = 0;
+    let jitterN = 0;
+    let rttSum = 0;
+    let rttN = 0;
+    let packetLossEvents = 0;
+
+    for (const row of qualityRows) {
+      const expected = row.expected_step_count ?? 0;
+      const completed = row.completed_step_count ?? 0;
+      if (expected > 0) {
+        stepPctSum += Math.round((completed / expected) * 100);
+        stepPctN += 1;
+      }
+      if ((row.missing_step_ids ?? []).length > 0) missingEvents += 1;
+      for (const flag of row.issue_flags ?? []) {
+        flagCounts.set(flag, (flagCounts.get(flag) ?? 0) + 1);
+      }
+      const audio = row.audio_stats ?? {};
+      const jitter = Number(audio.maxJitterMs ?? 0);
+      const rtt = Number(audio.maxRttMs ?? 0);
+      const lost = Number(audio.maxPacketsLost ?? audio.lastPacketsLost ?? 0);
+      if (jitter > 0) {
+        jitterSum += jitter;
+        jitterN += 1;
+      }
+      if (rtt > 0) {
+        rttSum += rtt;
+        rttN += 1;
+      }
+      if (lost > 0) packetLossEvents += 1;
+    }
+
     return {
       stats: {
         seniors: seniorsRes.count ?? 0,
@@ -160,6 +224,22 @@ export const getAdminDashboard = createServerFn({ method: "GET" })
         urgentOpen: urgentRes.count ?? 0,
       },
       byLevel,
+      quality: {
+        totalEvents: qualityRows.length,
+        completedCalls: qualityRows.filter((r) => r.status === "completed").length,
+        failedCalls: qualityRows.filter((r) => r.status === "failed" || r.status === "too_short").length,
+        draftSaved: qualityRows.filter((r) => r.status === "draft_saved").length,
+        correctionEvents: qualityRows.filter((r) => r.status === "review_corrected").length,
+        avgStepCompletionPct: stepPctN ? Math.round(stepPctSum / stepPctN) : 0,
+        missingStepEventPct: qualityRows.length ? Math.round((missingEvents / qualityRows.length) * 100) : 0,
+        urgentQualityEvents: qualityRows.filter((r) => r.urgent_detected).length,
+        avgJitterMs: jitterN ? Math.round(jitterSum / jitterN) : null,
+        avgRttMs: rttN ? Math.round(rttSum / rttN) : null,
+        packetLossEvents,
+        topIssueFlags: Array.from(flagCounts, ([flag, count]) => ({ flag, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5),
+      },
       recent: (recentRes.data ?? []) as AdminDashboardRecent[],
       seoulDistricts: Array.from(districtMap, ([name, count]) => ({ name, count })).sort(
         (a, b) => b.count - a.count,
