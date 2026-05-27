@@ -258,11 +258,15 @@ export function decideNext(
   };
 }
 
-/** 시작용 첫 prompt */
+/** 시작용 첫 prompt — 영어 금지 가드를 함께 주입 */
 export function openingPrompt(recipientName: string): string {
-  return [
+  const koreanOnly =
+    "응답은 반드시 한국어로만 하세요. 영어 단어나 'thank you', 'ok', '땡큐', '오케이' 등은 " +
+    "어떤 변형도 사용하지 않습니다. 다음 문장만 그대로 말하세요. ";
+  const greeting = [
     "안녕하세요, 곁입니다.",
     "자녀 분이 신청하신 안부 확인 전화이고, 통화는 기록됩니다.",
     getPrompt(FIRST_QUESTION, { name: recipientName }),
   ].join(" ");
+  return koreanOnly + greeting;
 }

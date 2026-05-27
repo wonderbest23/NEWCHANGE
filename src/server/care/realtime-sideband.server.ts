@@ -43,14 +43,31 @@ function isKnownToolName(name?: string): name is RealtimeToolName {
   );
 }
 
+// 모든 response.create instruction 앞에 붙이는 강제 한국어 prefix.
+// realtime 모델이 짧은 추임새/감탄사로 무심코 영어를 내뱉는 것을 막는다.
+const KOREAN_ONLY_PREFIX =
+  "응답은 반드시 한국어로만. 영어 단어/표기(thank you, ok, sorry, bye, 땡큐, 오케이 등) " +
+  "는 어떤 변형도 사용하지 마세요. ";
+
 function responseInstruction(result: ToolResponse): string {
   if (result.prompt) {
-    return `다음 문장만 한국어 음성으로 말하세요. 문장: "${result.prompt}"`;
+    return (
+      KOREAN_ONLY_PREFIX +
+      `다음 문장만 한국어 음성으로 그대로 말하세요. 문장: "${result.prompt}"`
+    );
   }
   if (result.end) {
-    return "짧게 작별 인사를 하고 마지막 문장에 반드시 '통화를 마치겠습니다'라고 말하세요.";
+    return (
+      KOREAN_ONLY_PREFIX +
+      "짧게 한국어로 작별 인사를 하고 마지막 문장에 반드시 '통화를 마치겠습니다' 라고 말하세요. " +
+      "'bye', 'goodbye', '바이' 등은 사용하지 마세요."
+    );
   }
-  return "어르신께 짧게 공감한 뒤 다음 질문을 한 가지만 이어서 여쭤보세요.";
+  return (
+    KOREAN_ONLY_PREFIX +
+    "어르신께 한국어로 짧게 공감한 뒤 다음 질문을 한 가지만 이어서 여쭤보세요. " +
+    "추임새는 '네', '그러시군요' 만 사용하세요."
+  );
 }
 
 function sendJson(ws: WebSocket, value: unknown) {

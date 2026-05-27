@@ -105,15 +105,27 @@ async function callOpenAIAccept(
     instructions: buildSystemPrompt({ recipientName }),
     audio: {
       input: {
+        // whisper-1 의 language='ko' 힌트만으로도 영어 transcription 확률을 크게 줄인다.
         transcription: { model: "whisper-1", language: "ko" },
+        // Cross-talk / 배경 소음 차단 강화:
+        //  - threshold 0.68 → 0.9: 자신감 있는 발화만 user turn 으로 간주.
+        //    옆사람 잡담, TV 소리, 거리 소음 등 약한 신호는 무시.
+        //  - silence_duration_ms 900 → 1500: 어르신이 답한 뒤 1.5초 정적이 있어야
+        //    "다 말했다" 로 판정. 짧은 배경 끼어들기로 turn 이 끊기는 것 방지.
+        //  - prefix_padding_ms 350 → 500: 발화 시작 직전 버퍼를 늘려 잡음 제거 안정성↑.
+        //  - interrupt_response: false (유지) — AI 발화 도중 백그라운드 소음으로
+        //    응답이 끊기지 않게 한다.
         turn_detection: {
           type: "server_vad",
-          threshold: 0.68,
-          prefix_padding_ms: 350,
-          silence_duration_ms: 900,
+          threshold: 0.9,
+          prefix_padding_ms: 500,
+          silence_duration_ms: 1500,
           create_response: true,
           interrupt_response: false,
         },
+        // 전화 수화기 가정 (어르신이 휴대폰을 귀에 대고 받는 경우).
+        // 스피커폰 + TV 배경 환경에서는 모델 측에서 분리 한계가 있어
+        // 위 VAD threshold 로 보강한다.
         noise_reduction: { type: "near_field" },
       },
       output: {
