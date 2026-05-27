@@ -162,9 +162,27 @@ const NODES: Record<QuestionId, QuestionNode> = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const FIRST_QUESTION: QuestionId = "Q0_IDENTITY";
-export const MAX_UNCLEAR_PER_QUESTION = 1;
-export const HARD_TIMEOUT_SEC = 5 * 60;
-export const SILENCE_TIMEOUT_SEC = 15;
+
+// 운영 중 튜닝 가능하게 env 로 오버라이드.
+// 너무 높이면 통화가 길어지고 어르신 피로도가 올라간다. 기본 1회 권장.
+function readPositiveInt(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+export const MAX_UNCLEAR_PER_QUESTION = readPositiveInt(
+  process.env.CARE_MAX_UNCLEAR_PER_QUESTION,
+  1,
+);
+export const HARD_TIMEOUT_SEC = readPositiveInt(
+  process.env.CARE_CALL_HARD_TIMEOUT_SEC,
+  5 * 60,
+);
+export const SILENCE_TIMEOUT_SEC = readPositiveInt(
+  process.env.CARE_CALL_SILENCE_TIMEOUT_SEC,
+  15,
+);
 
 export function getPrompt(id: QuestionId, vars: Record<string, string> = {}): string {
   const node = NODES[id];

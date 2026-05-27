@@ -286,6 +286,7 @@ export type Database = {
           id: string
           job_id: string | null
           openai_session_id: string | null
+          post_processed_at: string | null
           recording_expires_at: string | null
           recording_url: string | null
           started_at: string | null
@@ -305,6 +306,7 @@ export type Database = {
           id?: string
           job_id?: string | null
           openai_session_id?: string | null
+          post_processed_at?: string | null
           recording_expires_at?: string | null
           recording_url?: string | null
           started_at?: string | null
@@ -324,6 +326,7 @@ export type Database = {
           id?: string
           job_id?: string | null
           openai_session_id?: string | null
+          post_processed_at?: string | null
           recording_expires_at?: string | null
           recording_url?: string | null
           started_at?: string | null

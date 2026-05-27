@@ -172,7 +172,12 @@ export const getGuardianHome = createServerFn({ method: "GET" })
 
     const today = new Date().toISOString().slice(0, 10);
 
-    // 2) 병렬 조회: 최근 통화 / 오늘 알림 / 오늘 daily_log / 오늘 extracted / 최근 fallback / 최근 jobs / 최근 음성 심리 분석
+    // voice_psych_analyses 는 아직 production 파이프라인이 없다.
+    // ENABLE_VOICE_PSYCH=1 이 명시적으로 설정된 경우에만 조회/노출한다.
+    // 그 외에는 빈 배열을 반환해 UI 카드가 렌더되지 않도록 한다.
+    const voicePsychEnabled = process.env.ENABLE_VOICE_PSYCH === "1";
+
+    // 2) 병렬 조회: 최근 통화 / 오늘 알림 / 오늘 daily_log / 오늘 extracted / 최근 fallback / 최근 jobs / (옵션) 음성 심리 분석
     const [sessionRes, alertsRes, logRes, extractedRes, fallbackRes, jobsRes, psychRes] =
       await Promise.all([
         supabase
@@ -208,14 +213,16 @@ export const getGuardianHome = createServerFn({ method: "GET" })
           .eq("care_recipient_id", recipient.id)
           .order("created_at", { ascending: false })
           .limit(5),
-        supabase
-          .from("voice_psych_analyses")
-          .select(
-            "id, analyzed_for_date, overall_tone, energy_score, fatigue_score, depression_score, anxiety_score, anger_score, voice_features, summary, risk_flags, created_at",
-          )
-          .eq("care_recipient_id", recipient.id)
-          .order("analyzed_for_date", { ascending: false })
-          .limit(7),
+        voicePsychEnabled
+          ? supabase
+              .from("voice_psych_analyses")
+              .select(
+                "id, analyzed_for_date, overall_tone, energy_score, fatigue_score, depression_score, anxiety_score, anger_score, voice_features, summary, risk_flags, created_at",
+              )
+              .eq("care_recipient_id", recipient.id)
+              .order("analyzed_for_date", { ascending: false })
+              .limit(7)
+          : Promise.resolve({ data: [] as VoicePsychRow[], error: null }),
       ]);
 
     if (sessionRes.error) throw sessionRes.error;

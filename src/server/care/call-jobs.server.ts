@@ -18,16 +18,20 @@ export type { CreateImmediateJobResult } from "./call-jobs.functions";
 // ─────────────────────────────────────────────────────────────────────────────
 // No-answer fallback handler
 //
-// 정책:
-//   - 통화 status가 no_answer / busy / failed 일 때 호출
-//   - 같은 care_recipient에 대해 원본(parent) job의 retry_count < 1 이면
-//     30분 뒤 retry job 생성 (reason='retry')
-//   - 그 외 (이미 retry 했거나 parent_job 추적 불가) → 부모님 phone_e164로
-//     SMS fallback enqueue (notification_outbox, alert_id=null)
+// 정책 (reason별 차등):
+//   - reason='no_answer' (부재중):
+//       parent_job.retry_count < 1 → 30분 뒤 retry job 생성
+//       이미 retry 했으면 → 부모님 SMS fallback enqueue
+//   - reason='busy' (통화 중):
+//       parent_job.retry_count < 1 → 10분 뒤 retry (부재중보다 짧게)
+//       이미 retry 했으면 → SMS fallback
+//   - reason='failed' (Twilio 자체 에러):
+//       retry 하지 않음 — 같은 에러가 반복될 가능성이 높고 비용만 발생.
+//       SMS fallback도 보내지 않음 — 부모님 잘못이 아님. 운영 알림만 로그.
 //
 // 멱등성:
-//   - 같은 session_id에 대해 sms fallback이 이미 enqueue 되어 있으면 skip
-//   - 같은 session_id에 대해 retry job이 이미 생성되어 있으면 skip
+//   - 같은 parent_job_id 의 retry job이 이미 있으면 skip
+//   - 같은 session_id 의 sms fallback이 이미 enqueue 되어 있으면 skip
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { enqueueSms } from "@/server/notifications/outbox.server";
@@ -37,19 +41,44 @@ const PARENT_FALLBACK_TEMPLATE = "parent_call_fallback_v1";
 const PARENT_FALLBACK_BODY =
   "안부 전화를 못 받으셨어요. 괜찮으면 1, 식사를 못 했으면 2, 몸이 불편하면 3, 전화가 필요하면 4를 답장해주세요.";
 
+export type NoAnswerReason = "no_answer" | "busy" | "failed";
+
 export interface NoAnswerFallbackResult {
   ok: boolean;
-  action: "retry_scheduled" | "sms_enqueued" | "sms_already_enqueued" | "retry_already_scheduled" | "skipped" | "no_phone";
+  action:
+    | "retry_scheduled"
+    | "sms_enqueued"
+    | "sms_already_enqueued"
+    | "retry_already_scheduled"
+    | "skipped_failed_no_retry"
+    | "skipped"
+    | "no_phone";
   jobId?: string;
   outboxId?: string;
   reason?: string;
 }
 
+const RETRY_DELAY_MIN: Record<NoAnswerReason, number> = {
+  no_answer: 30,
+  busy: 10,
+  // failed → not retried; entry kept so the type stays exhaustive.
+  failed: 0,
+};
+
 export async function handleNoAnswerFallback(params: {
   sessionId: string;
   recipientId: string;
+  reason?: NoAnswerReason;
 }): Promise<NoAnswerFallbackResult> {
   const { sessionId, recipientId } = params;
+  const reason: NoAnswerReason = params.reason ?? "no_answer";
+
+  // 'failed' = Twilio 자체 오류 (carrier 거부 등). 재시도해도 같은 결과일 가능성이 높고,
+  // 부모님 잘못이 아니므로 SMS도 보내지 않는다. 운영 채널 알림은 별도 시스템에서 처리.
+  if (reason === "failed") {
+    console.warn("[no-answer-fallback] reason=failed → no retry, no sms", { sessionId });
+    return { ok: true, action: "skipped_failed_no_retry" };
+  }
 
   // 1) session → job 추적 (parent job 의 retry_count 결정)
   const sess = await supabaseAdmin
@@ -99,7 +128,8 @@ export async function handleNoAnswerFallback(params: {
       return { ok: true, action: "retry_already_scheduled", jobId: existingRetry.data[0].id };
     }
 
-    const scheduledAt = new Date(Date.now() + 30 * 60 * 1000);
+    const delayMin = RETRY_DELAY_MIN[reason] || 30;
+    const scheduledAt = new Date(Date.now() + delayMin * 60 * 1000);
     const windowEnd = new Date(scheduledAt.getTime() + 30 * 60 * 1000);
     const newJob = await supabaseAdmin
       .from("outbound_call_jobs")

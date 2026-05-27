@@ -22,6 +22,8 @@ import { mapIncomingSipToSession } from "@/server/care/session-mapping.server";
 import { buildSystemPrompt } from "@/server/care/llm-prompt";
 import { DEFAULT_KOREAN_VOICE } from "@/lib/voice-profile";
 import { startRealtimeSideband } from "@/server/care/realtime-sideband.server";
+import { keepAlive } from "@/server/runtime/keep-alive.server";
+import { fireOpsAlert } from "@/server/care/ops-alerts.server";
 
 interface IncomingPayload {
   type?: string;
@@ -203,7 +205,16 @@ export const Route = createFileRoute("/api/public/openai/session")({
 
         const mapped = await mapIncomingSipToSession(sipHeaders);
         if (!mapped) {
-          console.error("[openai:session] session mapping failed", { callId, sipHeaders });
+          // 매핑 실패는 통화 100% 손실 — 운영자에게 즉시 알린다.
+          // dedupeKey = callId 라 같은 webhook 재시도에 대해서는 한 번만 SMS.
+          keepAlive(
+            fireOpsAlert({
+              kind: "sip_mapping_failed",
+              message: `OpenAI incoming SIP 매핑 실패. call_id=${callId}`,
+              dedupeKey: `sip_mapping_failed:${callId}`,
+              context: { call_id: callId, sip_headers: sipHeaders },
+            }),
+          );
           return Response.json({ ok: false, error: "mapping_failed" }, { status: 200 });
         }
 
@@ -232,9 +243,18 @@ export const Route = createFileRoute("/api/public/openai/session")({
 
         const accept = await callOpenAIAccept(callId, recipientName);
         if (accept.ok) {
-          void startRealtimeSideband({ openaiCallId: callId, recipientName }).catch((e) => {
-            console.error("[openai:session] sideband failed", e);
-          });
+          // Sideband WS must outlive this HTTP response — route through keepAlive
+          // so Cloudflare Workers' ctx.waitUntil (when wired) holds the runtime open.
+          keepAlive(startRealtimeSideband({ openaiCallId: callId, recipientName }));
+        } else {
+          keepAlive(
+            fireOpsAlert({
+              kind: "openai_accept_failed",
+              message: `OpenAI realtime accept 실패. status=${accept.status ?? "n/a"} err=${accept.error ?? "n/a"}`,
+              dedupeKey: `openai_accept_failed:${callId}`,
+              context: { call_id: callId, status: accept.status, error: accept.error },
+            }),
+          );
         }
         return Response.json({
           ok: accept.ok,

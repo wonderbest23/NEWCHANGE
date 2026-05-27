@@ -28,9 +28,22 @@ async function findSessionByOpenaiCallId(
 }
 
 async function setEndReason(sessionId: string, reason: CallEndReason) {
+  const patch: Record<string, unknown> = {
+    end_reason: reason,
+    updated_at: new Date().toISOString(),
+  };
+  // wrong_person / escalate 는 call_sessions.status check constraint 에도 매칭되는
+  // 별도 상태값이 있다. Twilio 가 'completed' 를 보내기 전에 우리가 명확한 종료 사유를
+  // 알고 있으므로 status 도 함께 갱신하여 운영 통계/대시보드 분류가 정확해지게 한다.
+  if (reason === "wrong_person") {
+    patch.status = "wrong_person";
+    patch.wrong_person_flag = true;
+  } else if (reason === "escalate") {
+    patch.status = "escalated";
+  }
   const { error } = await supabaseAdmin
     .from("call_sessions")
-    .update({ end_reason: reason, updated_at: new Date().toISOString() } as never)
+    .update(patch as never)
     .eq("id", sessionId);
   if (error) console.error("[realtime:tool] end_reason update failed", error);
 }
@@ -71,6 +84,8 @@ export async function handleRealtimeToolCall(input: {
 
       if (next.end && next.next_question_id === "ESCALATE") {
         await setEndReason(session.id, "escalate");
+      } else if (next.end && next.next_question_id === "END_WRONG") {
+        await setEndReason(session.id, "wrong_person");
       } else if (next.end && next.next_question_id === null) {
         await setEndReason(session.id, "normal");
       }

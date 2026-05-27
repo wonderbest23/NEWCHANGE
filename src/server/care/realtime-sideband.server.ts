@@ -1,6 +1,7 @@
 import { handleRealtimeToolCall, type RealtimeToolName } from "@/server/care/realtime-tools.server";
 import { openingPrompt } from "@/server/care/state-machine";
 import type { ToolResponse } from "@/server/care/types";
+import { keepAlive } from "@/server/runtime/keep-alive.server";
 
 interface PendingToolCall {
   name?: string;
@@ -88,6 +89,9 @@ async function openRealtimeWebSocket(openaiCallId: string, apiKey: string): Prom
 }
 
 async function hangupSoon(openaiCallId: string) {
+  // 3.5s delay so the final TTS sentence has time to play before we hang up.
+  // Must be wrapped in keepAlive at the call-site so Workers doesn't kill it
+  // when the originating handler returns.
   await new Promise((resolve) => setTimeout(resolve, 3500));
   const apiKey = getApiKey();
   await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(openaiCallId)}/hangup`, {
@@ -132,7 +136,7 @@ async function runToolAndRespond(
     },
   });
 
-  if (result.end) void hangupSoon(openaiCallId);
+  if (result.end) keepAlive(hangupSoon(openaiCallId));
 }
 
 function extractDoneToolCall(msg: any, pending: Map<string, PendingToolCall>): PendingToolCall | null {

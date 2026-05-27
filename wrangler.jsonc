@@ -3,8 +3,17 @@
   "name": "sliverapp",
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
-  "main": "@tanstack/react-start/server-entry",
+  // src/server-entry.ts 가 TanStack Start 의 기본 fetch handler 를 감싸
+  // 매 요청마다 ctx.waitUntil 을 keepAlive 헬퍼에 등록하고,
+  // Cron Triggers 의 `scheduled` handler 도 함께 export 한다.
+  "main": "src/server-entry.ts",
   "placement": { "mode": "smart" },
+  // 안부전화 발신 / 알림 / 룰엔진 cron.
+  //  - 매 1분: due outbound_call_jobs 처리 + notification_outbox dispatch
+  //  - 매 5분: rule engine 재평가
+  "triggers": {
+    "crons": ["* * * * *", "*/5 * * * *"]
+  },
   "vars": {
     "SUPABASE_URL": "https://nurpesdatxgspsifsllu.supabase.co",
     "SUPABASE_PUBLISHABLE_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51cnBlc2RhdHhnc3BzaWZzbGx1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNzc3NDcsImV4cCI6MjA5Mjk1Mzc0N30.KKuLo8WiXhFmCSf7fDkFwX_8ecvrAOunTm1YkaHdBQ0",
