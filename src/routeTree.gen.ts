@@ -20,6 +20,7 @@ import { Route as AgenciesRouteImport } from './routes/agencies'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TipsIndexRouteImport } from './routes/tips.index'
+import { Route as ScenarioIndexRouteImport } from './routes/scenario.index'
 import { Route as PolicyIndexRouteImport } from './routes/policy.index'
 import { Route as PartnerIndexRouteImport } from './routes/partner.index'
 import { Route as HomeIndexRouteImport } from './routes/home.index'
@@ -28,6 +29,7 @@ import { Route as CareIndexRouteImport } from './routes/care.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as TipsTipIdRouteImport } from './routes/tips.$tipId'
 import { Route as SeniorHomeRouteImport } from './routes/senior.home'
+import { Route as ScenarioScenarioIdRouteImport } from './routes/scenario.$scenarioId'
 import { Route as PolicySlugRouteImport } from './routes/policy.$slug'
 import { Route as PartnerTasksRouteImport } from './routes/partner.tasks'
 import { Route as InviteGuardianRouteImport } from './routes/invite.guardian'
@@ -130,6 +132,11 @@ const TipsIndexRoute = TipsIndexRouteImport.update({
   path: '/tips/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ScenarioIndexRoute = ScenarioIndexRouteImport.update({
+  id: '/scenario/',
+  path: '/scenario/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PolicyIndexRoute = PolicyIndexRouteImport.update({
   id: '/policy/',
   path: '/policy/',
@@ -168,6 +175,11 @@ const TipsTipIdRoute = TipsTipIdRouteImport.update({
 const SeniorHomeRoute = SeniorHomeRouteImport.update({
   id: '/senior/home',
   path: '/senior/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScenarioScenarioIdRoute = ScenarioScenarioIdRouteImport.update({
+  id: '/scenario/$scenarioId',
+  path: '/scenario/$scenarioId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PolicySlugRoute = PolicySlugRouteImport.update({
@@ -444,6 +456,7 @@ export interface FileRoutesByFullPath {
   '/invite/guardian': typeof InviteGuardianRoute
   '/partner/tasks': typeof PartnerTasksRoute
   '/policy/$slug': typeof PolicySlugRoute
+  '/scenario/$scenarioId': typeof ScenarioScenarioIdRoute
   '/senior/home': typeof SeniorHomeRoute
   '/tips/$tipId': typeof TipsTipIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -452,6 +465,7 @@ export interface FileRoutesByFullPath {
   '/home/': typeof HomeIndexRoute
   '/partner/': typeof PartnerIndexRoute
   '/policy/': typeof PolicyIndexRoute
+  '/scenario/': typeof ScenarioIndexRoute
   '/tips/': typeof TipsIndexRoute
   '/admin/tips/$tipId': typeof AdminTipsTipIdRoute
   '/community/c/$slug': typeof CommunityCSlugRoute
@@ -509,6 +523,7 @@ export interface FileRoutesByTo {
   '/invite/guardian': typeof InviteGuardianRoute
   '/partner/tasks': typeof PartnerTasksRoute
   '/policy/$slug': typeof PolicySlugRoute
+  '/scenario/$scenarioId': typeof ScenarioScenarioIdRoute
   '/senior/home': typeof SeniorHomeRoute
   '/tips/$tipId': typeof TipsTipIdRoute
   '/admin': typeof AdminIndexRoute
@@ -517,6 +532,7 @@ export interface FileRoutesByTo {
   '/home': typeof HomeIndexRoute
   '/partner': typeof PartnerIndexRoute
   '/policy': typeof PolicyIndexRoute
+  '/scenario': typeof ScenarioIndexRoute
   '/tips': typeof TipsIndexRoute
   '/admin/tips/$tipId': typeof AdminTipsTipIdRoute
   '/community/c/$slug': typeof CommunityCSlugRoute
@@ -577,6 +593,7 @@ export interface FileRoutesById {
   '/invite/guardian': typeof InviteGuardianRoute
   '/partner/tasks': typeof PartnerTasksRoute
   '/policy/$slug': typeof PolicySlugRoute
+  '/scenario/$scenarioId': typeof ScenarioScenarioIdRoute
   '/senior/home': typeof SeniorHomeRoute
   '/tips/$tipId': typeof TipsTipIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -585,6 +602,7 @@ export interface FileRoutesById {
   '/home/': typeof HomeIndexRoute
   '/partner/': typeof PartnerIndexRoute
   '/policy/': typeof PolicyIndexRoute
+  '/scenario/': typeof ScenarioIndexRoute
   '/tips/': typeof TipsIndexRoute
   '/admin/tips/$tipId': typeof AdminTipsTipIdRoute
   '/community/c/$slug': typeof CommunityCSlugRoute
@@ -646,6 +664,7 @@ export interface FileRouteTypes {
     | '/invite/guardian'
     | '/partner/tasks'
     | '/policy/$slug'
+    | '/scenario/$scenarioId'
     | '/senior/home'
     | '/tips/$tipId'
     | '/admin/'
@@ -654,6 +673,7 @@ export interface FileRouteTypes {
     | '/home/'
     | '/partner/'
     | '/policy/'
+    | '/scenario/'
     | '/tips/'
     | '/admin/tips/$tipId'
     | '/community/c/$slug'
@@ -711,6 +731,7 @@ export interface FileRouteTypes {
     | '/invite/guardian'
     | '/partner/tasks'
     | '/policy/$slug'
+    | '/scenario/$scenarioId'
     | '/senior/home'
     | '/tips/$tipId'
     | '/admin'
@@ -719,6 +740,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/partner'
     | '/policy'
+    | '/scenario'
     | '/tips'
     | '/admin/tips/$tipId'
     | '/community/c/$slug'
@@ -778,6 +800,7 @@ export interface FileRouteTypes {
     | '/invite/guardian'
     | '/partner/tasks'
     | '/policy/$slug'
+    | '/scenario/$scenarioId'
     | '/senior/home'
     | '/tips/$tipId'
     | '/admin/'
@@ -786,6 +809,7 @@ export interface FileRouteTypes {
     | '/home/'
     | '/partner/'
     | '/policy/'
+    | '/scenario/'
     | '/tips/'
     | '/admin/tips/$tipId'
     | '/community/c/$slug'
@@ -832,12 +856,14 @@ export interface RootRouteChildren {
   InviteGuardianRoute: typeof InviteGuardianRoute
   PartnerTasksRoute: typeof PartnerTasksRoute
   PolicySlugRoute: typeof PolicySlugRoute
+  ScenarioScenarioIdRoute: typeof ScenarioScenarioIdRoute
   SeniorHomeRoute: typeof SeniorHomeRoute
   TipsTipIdRoute: typeof TipsTipIdRoute
   CareIndexRoute: typeof CareIndexRoute
   CommunityIndexRoute: typeof CommunityIndexRoute
   PartnerIndexRoute: typeof PartnerIndexRoute
   PolicyIndexRoute: typeof PolicyIndexRoute
+  ScenarioIndexRoute: typeof ScenarioIndexRoute
   TipsIndexRoute: typeof TipsIndexRoute
   CommunityCSlugRoute: typeof CommunityCSlugRoute
   CommunityPostPostIdRoute: typeof CommunityPostPostIdRoute
@@ -939,6 +965,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TipsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/scenario/': {
+      id: '/scenario/'
+      path: '/scenario'
+      fullPath: '/scenario/'
+      preLoaderRoute: typeof ScenarioIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/policy/': {
       id: '/policy/'
       path: '/policy'
@@ -993,6 +1026,13 @@ declare module '@tanstack/react-router' {
       path: '/senior/home'
       fullPath: '/senior/home'
       preLoaderRoute: typeof SeniorHomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scenario/$scenarioId': {
+      id: '/scenario/$scenarioId'
+      path: '/scenario/$scenarioId'
+      fullPath: '/scenario/$scenarioId'
+      preLoaderRoute: typeof ScenarioScenarioIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/policy/$slug': {
@@ -1405,12 +1445,14 @@ const rootRouteChildren: RootRouteChildren = {
   InviteGuardianRoute: InviteGuardianRoute,
   PartnerTasksRoute: PartnerTasksRoute,
   PolicySlugRoute: PolicySlugRoute,
+  ScenarioScenarioIdRoute: ScenarioScenarioIdRoute,
   SeniorHomeRoute: SeniorHomeRoute,
   TipsTipIdRoute: TipsTipIdRoute,
   CareIndexRoute: CareIndexRoute,
   CommunityIndexRoute: CommunityIndexRoute,
   PartnerIndexRoute: PartnerIndexRoute,
   PolicyIndexRoute: PolicyIndexRoute,
+  ScenarioIndexRoute: ScenarioIndexRoute,
   TipsIndexRoute: TipsIndexRoute,
   CommunityCSlugRoute: CommunityCSlugRoute,
   CommunityPostPostIdRoute: CommunityPostPostIdRoute,
