@@ -41,6 +41,7 @@ import { Route as GuardianDashboardRouteImport } from './routes/guardian.dashboa
 import { Route as GuardianCheckInRouteImport } from './routes/guardian.check-in'
 import { Route as GuardianAlertsRouteImport } from './routes/guardian.alerts'
 import { Route as CommunityWriteRouteImport } from './routes/community.write'
+import { Route as BetaWalkMonsterRouteImport } from './routes/beta.walk-monster'
 import { Route as AdminVoiceTestRouteImport } from './routes/admin.voice-test'
 import { Route as AdminTipsRouteImport } from './routes/admin.tips'
 import { Route as AdminSiteConfigRouteImport } from './routes/admin.site-config'
@@ -233,6 +234,11 @@ const CommunityWriteRoute = CommunityWriteRouteImport.update({
   path: '/community/write',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BetaWalkMonsterRoute = BetaWalkMonsterRouteImport.update({
+  id: '/beta/walk-monster',
+  path: '/beta/walk-monster',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminVoiceTestRoute = AdminVoiceTestRouteImport.update({
   id: '/voice-test',
   path: '/voice-test',
@@ -418,6 +424,7 @@ export interface FileRoutesByFullPath {
   '/admin/site-config': typeof AdminSiteConfigRoute
   '/admin/tips': typeof AdminTipsRouteWithChildren
   '/admin/voice-test': typeof AdminVoiceTestRoute
+  '/beta/walk-monster': typeof BetaWalkMonsterRoute
   '/community/write': typeof CommunityWriteRoute
   '/guardian/alerts': typeof GuardianAlertsRoute
   '/guardian/check-in': typeof GuardianCheckInRoute
@@ -481,6 +488,7 @@ export interface FileRoutesByTo {
   '/admin/site-config': typeof AdminSiteConfigRoute
   '/admin/tips': typeof AdminTipsRouteWithChildren
   '/admin/voice-test': typeof AdminVoiceTestRoute
+  '/beta/walk-monster': typeof BetaWalkMonsterRoute
   '/community/write': typeof CommunityWriteRoute
   '/guardian/alerts': typeof GuardianAlertsRoute
   '/guardian/check-in': typeof GuardianCheckInRoute
@@ -547,6 +555,7 @@ export interface FileRoutesById {
   '/admin/site-config': typeof AdminSiteConfigRoute
   '/admin/tips': typeof AdminTipsRouteWithChildren
   '/admin/voice-test': typeof AdminVoiceTestRoute
+  '/beta/walk-monster': typeof BetaWalkMonsterRoute
   '/community/write': typeof CommunityWriteRoute
   '/guardian/alerts': typeof GuardianAlertsRoute
   '/guardian/check-in': typeof GuardianCheckInRoute
@@ -614,6 +623,7 @@ export interface FileRouteTypes {
     | '/admin/site-config'
     | '/admin/tips'
     | '/admin/voice-test'
+    | '/beta/walk-monster'
     | '/community/write'
     | '/guardian/alerts'
     | '/guardian/check-in'
@@ -677,6 +687,7 @@ export interface FileRouteTypes {
     | '/admin/site-config'
     | '/admin/tips'
     | '/admin/voice-test'
+    | '/beta/walk-monster'
     | '/community/write'
     | '/guardian/alerts'
     | '/guardian/check-in'
@@ -742,6 +753,7 @@ export interface FileRouteTypes {
     | '/admin/site-config'
     | '/admin/tips'
     | '/admin/voice-test'
+    | '/beta/walk-monster'
     | '/community/write'
     | '/guardian/alerts'
     | '/guardian/check-in'
@@ -798,6 +810,7 @@ export interface RootRouteChildren {
   OnboardingRoute: typeof OnboardingRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   WatchRoute: typeof WatchRoute
+  BetaWalkMonsterRoute: typeof BetaWalkMonsterRoute
   CommunityWriteRoute: typeof CommunityWriteRoute
   GuardianAlertsRoute: typeof GuardianAlertsRoute
   GuardianCheckInRoute: typeof GuardianCheckInRoute
@@ -1058,6 +1071,13 @@ declare module '@tanstack/react-router' {
       path: '/community/write'
       fullPath: '/community/write'
       preLoaderRoute: typeof CommunityWriteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/beta/walk-monster': {
+      id: '/beta/walk-monster'
+      path: '/beta/walk-monster'
+      fullPath: '/beta/walk-monster'
+      preLoaderRoute: typeof BetaWalkMonsterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/voice-test': {
@@ -1355,6 +1375,7 @@ const rootRouteChildren: RootRouteChildren = {
   OnboardingRoute: OnboardingRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   WatchRoute: WatchRoute,
+  BetaWalkMonsterRoute: BetaWalkMonsterRoute,
   CommunityWriteRoute: CommunityWriteRoute,
   GuardianAlertsRoute: GuardianAlertsRoute,
   GuardianCheckInRoute: GuardianCheckInRoute,
