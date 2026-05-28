@@ -14,12 +14,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { Fish, Timer } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
 import { authHeaders } from "@/lib/auth/server-fn-headers";
 import { markStepComplete } from "@/lib/scenario/actions";
+import { useGeneratedModel } from "@/lib/asset-forge/useGeneratedModel";
 import { fx } from "@/lib/game/fx";
 import { ScenarioCameraShell } from "./ScenarioCameraShell";
 import type { ScenarioRunnerProps } from "@/lib/scenario/types";
@@ -48,7 +49,10 @@ function pickFish(): FishKey {
 type Phase = "ready" | "casting" | "waiting" | "biting" | "reeling" | "done";
 
 export default function FishingScenario({ onExit, onScenarioComplete }: ScenarioRunnerProps) {
-  const qc = useQueryClient();
+  // AI 생성 물고기 모델 (asset-forge active=true 면 자동 로드).
+  // 모델이 있을 때는 잡았을 때 화면에 잠깐 보여주고, 없으면 emoji fallback.
+  const generatedFish = useGeneratedModel("fish");
+
   const [phase, setPhase] = useState<Phase>("ready");
   const [castPower, setCastPower] = useState(0); // 0..1
   const [bobberPos, setBobberPos] = useState<{ x: number; y: number } | null>(null);
@@ -260,7 +264,9 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
       </div>
 
       <p className="pointer-events-none absolute bottom-2 left-0 right-0 text-center text-[10px] text-white/45">
-        * 실제 강가 인식 모델 적용 예정
+        {generatedFish.ready
+          ? "🐟 AI 생성 물고기 모델 적용됨"
+          : "* AI 생성 물고기는 admin/asset-forge 에서 생성하면 자동 적용"}
       </p>
     </ScenarioCameraShell>
   );

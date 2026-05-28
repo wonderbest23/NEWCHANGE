@@ -51,8 +51,11 @@ export default {
       const ROUTES_BY_CRON: Record<string, string[]> = {
         // 매 1분: 발신 due job 처리 (안부전화 핵심 루프)
         "* * * * *": ["/api/internal/call-jobs/run", "/api/internal/notifications/dispatch"],
-        // 매 5분: rule engine 재평가 + 누락 fallback 점검
-        "*/5 * * * *": ["/api/internal/rules/run"],
+        // 매 5분: rule engine 재평가 + 누락 fallback 점검 + Tripo3D 작업 polling
+        "*/5 * * * *": [
+          "/api/internal/rules/run",
+          "/api/internal/asset-forge/poll",
+        ],
       };
 
       const routes = ROUTES_BY_CRON[event.cron] ?? [];

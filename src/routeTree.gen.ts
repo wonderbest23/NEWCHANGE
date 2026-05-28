@@ -51,6 +51,7 @@ import { Route as AdminOrganizationPipelineRouteImport } from './routes/admin.or
 import { Route as AdminInvestorKpiRouteImport } from './routes/admin.investor-kpi'
 import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
 import { Route as AdminEmotionRecRouteImport } from './routes/admin.emotion-rec'
+import { Route as AdminAssetForgeRouteImport } from './routes/admin.asset-forge'
 import { Route as AdminAskLogsRouteImport } from './routes/admin.ask-logs'
 import { Route as AdminAlertsRouteImport } from './routes/admin.alerts'
 import { Route as AdminAgenciesRouteImport } from './routes/admin.agencies'
@@ -75,6 +76,7 @@ import { Route as ApiInternalPushSendRouteImport } from './routes/api/internal/p
 import { Route as ApiInternalNotificationsDispatchRouteImport } from './routes/api/internal/notifications.dispatch'
 import { Route as ApiInternalExtractionRunRouteImport } from './routes/api/internal/extraction.run'
 import { Route as ApiInternalCallJobsRunRouteImport } from './routes/api/internal/call-jobs.run'
+import { Route as ApiInternalAssetForgePollRouteImport } from './routes/api/internal/asset-forge.poll'
 import { Route as ApiPublicTwilioTwimlJobIdRouteImport } from './routes/api/public/twilio.twiml.$jobId'
 
 const WatchRoute = WatchRouteImport.update({
@@ -288,6 +290,11 @@ const AdminEmotionRecRoute = AdminEmotionRecRouteImport.update({
   path: '/emotion-rec',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminAssetForgeRoute = AdminAssetForgeRouteImport.update({
+  id: '/asset-forge',
+  path: '/asset-forge',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminAskLogsRoute = AdminAskLogsRouteImport.update({
   id: '/ask-logs',
   path: '/ask-logs',
@@ -414,6 +421,12 @@ const ApiInternalCallJobsRunRoute = ApiInternalCallJobsRunRouteImport.update({
   path: '/api/internal/call-jobs/run',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalAssetForgePollRoute =
+  ApiInternalAssetForgePollRouteImport.update({
+    id: '/api/internal/asset-forge/poll',
+    path: '/api/internal/asset-forge/poll',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicTwilioTwimlJobIdRoute =
   ApiPublicTwilioTwimlJobIdRouteImport.update({
     id: '/api/public/twilio/twiml/$jobId',
@@ -435,6 +448,7 @@ export interface FileRoutesByFullPath {
   '/admin/agencies': typeof AdminAgenciesRoute
   '/admin/alerts': typeof AdminAlertsRoute
   '/admin/ask-logs': typeof AdminAskLogsRoute
+  '/admin/asset-forge': typeof AdminAssetForgeRoute
   '/admin/emotion-rec': typeof AdminEmotionRecRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
@@ -472,6 +486,7 @@ export interface FileRoutesByFullPath {
   '/community/post/$postId': typeof CommunityPostPostIdRoute
   '/home/messages/$partnerId': typeof HomeMessagesPartnerIdRoute
   '/home/messages/': typeof HomeMessagesIndexRoute
+  '/api/internal/asset-forge/poll': typeof ApiInternalAssetForgePollRoute
   '/api/internal/call-jobs/run': typeof ApiInternalCallJobsRunRoute
   '/api/internal/extraction/run': typeof ApiInternalExtractionRunRoute
   '/api/internal/notifications/dispatch': typeof ApiInternalNotificationsDispatchRoute
@@ -502,6 +517,7 @@ export interface FileRoutesByTo {
   '/admin/agencies': typeof AdminAgenciesRoute
   '/admin/alerts': typeof AdminAlertsRoute
   '/admin/ask-logs': typeof AdminAskLogsRoute
+  '/admin/asset-forge': typeof AdminAssetForgeRoute
   '/admin/emotion-rec': typeof AdminEmotionRecRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
@@ -539,6 +555,7 @@ export interface FileRoutesByTo {
   '/community/post/$postId': typeof CommunityPostPostIdRoute
   '/home/messages/$partnerId': typeof HomeMessagesPartnerIdRoute
   '/home/messages': typeof HomeMessagesIndexRoute
+  '/api/internal/asset-forge/poll': typeof ApiInternalAssetForgePollRoute
   '/api/internal/call-jobs/run': typeof ApiInternalCallJobsRunRoute
   '/api/internal/extraction/run': typeof ApiInternalExtractionRunRoute
   '/api/internal/notifications/dispatch': typeof ApiInternalNotificationsDispatchRoute
@@ -572,6 +589,7 @@ export interface FileRoutesById {
   '/admin/agencies': typeof AdminAgenciesRoute
   '/admin/alerts': typeof AdminAlertsRoute
   '/admin/ask-logs': typeof AdminAskLogsRoute
+  '/admin/asset-forge': typeof AdminAssetForgeRoute
   '/admin/emotion-rec': typeof AdminEmotionRecRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
@@ -609,6 +627,7 @@ export interface FileRoutesById {
   '/community/post/$postId': typeof CommunityPostPostIdRoute
   '/home/messages/$partnerId': typeof HomeMessagesPartnerIdRoute
   '/home/messages/': typeof HomeMessagesIndexRoute
+  '/api/internal/asset-forge/poll': typeof ApiInternalAssetForgePollRoute
   '/api/internal/call-jobs/run': typeof ApiInternalCallJobsRunRoute
   '/api/internal/extraction/run': typeof ApiInternalExtractionRunRoute
   '/api/internal/notifications/dispatch': typeof ApiInternalNotificationsDispatchRoute
@@ -643,6 +662,7 @@ export interface FileRouteTypes {
     | '/admin/agencies'
     | '/admin/alerts'
     | '/admin/ask-logs'
+    | '/admin/asset-forge'
     | '/admin/emotion-rec'
     | '/admin/ingest'
     | '/admin/investor-kpi'
@@ -680,6 +700,7 @@ export interface FileRouteTypes {
     | '/community/post/$postId'
     | '/home/messages/$partnerId'
     | '/home/messages/'
+    | '/api/internal/asset-forge/poll'
     | '/api/internal/call-jobs/run'
     | '/api/internal/extraction/run'
     | '/api/internal/notifications/dispatch'
@@ -710,6 +731,7 @@ export interface FileRouteTypes {
     | '/admin/agencies'
     | '/admin/alerts'
     | '/admin/ask-logs'
+    | '/admin/asset-forge'
     | '/admin/emotion-rec'
     | '/admin/ingest'
     | '/admin/investor-kpi'
@@ -747,6 +769,7 @@ export interface FileRouteTypes {
     | '/community/post/$postId'
     | '/home/messages/$partnerId'
     | '/home/messages'
+    | '/api/internal/asset-forge/poll'
     | '/api/internal/call-jobs/run'
     | '/api/internal/extraction/run'
     | '/api/internal/notifications/dispatch'
@@ -779,6 +802,7 @@ export interface FileRouteTypes {
     | '/admin/agencies'
     | '/admin/alerts'
     | '/admin/ask-logs'
+    | '/admin/asset-forge'
     | '/admin/emotion-rec'
     | '/admin/ingest'
     | '/admin/investor-kpi'
@@ -816,6 +840,7 @@ export interface FileRouteTypes {
     | '/community/post/$postId'
     | '/home/messages/$partnerId'
     | '/home/messages/'
+    | '/api/internal/asset-forge/poll'
     | '/api/internal/call-jobs/run'
     | '/api/internal/extraction/run'
     | '/api/internal/notifications/dispatch'
@@ -867,6 +892,7 @@ export interface RootRouteChildren {
   TipsIndexRoute: typeof TipsIndexRoute
   CommunityCSlugRoute: typeof CommunityCSlugRoute
   CommunityPostPostIdRoute: typeof CommunityPostPostIdRoute
+  ApiInternalAssetForgePollRoute: typeof ApiInternalAssetForgePollRoute
   ApiInternalCallJobsRunRoute: typeof ApiInternalCallJobsRunRoute
   ApiInternalExtractionRunRoute: typeof ApiInternalExtractionRunRoute
   ApiInternalNotificationsDispatchRoute: typeof ApiInternalNotificationsDispatchRoute
@@ -1182,6 +1208,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminEmotionRecRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/asset-forge': {
+      id: '/admin/asset-forge'
+      path: '/asset-forge'
+      fullPath: '/admin/asset-forge'
+      preLoaderRoute: typeof AdminAssetForgeRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/ask-logs': {
       id: '/admin/ask-logs'
       path: '/ask-logs'
@@ -1350,6 +1383,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalCallJobsRunRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/asset-forge/poll': {
+      id: '/api/internal/asset-forge/poll'
+      path: '/api/internal/asset-forge/poll'
+      fullPath: '/api/internal/asset-forge/poll'
+      preLoaderRoute: typeof ApiInternalAssetForgePollRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/twilio/twiml/$jobId': {
       id: '/api/public/twilio/twiml/$jobId'
       path: '/api/public/twilio/twiml/$jobId'
@@ -1376,6 +1416,7 @@ interface AdminRouteChildren {
   AdminAgenciesRoute: typeof AdminAgenciesRoute
   AdminAlertsRoute: typeof AdminAlertsRoute
   AdminAskLogsRoute: typeof AdminAskLogsRoute
+  AdminAssetForgeRoute: typeof AdminAssetForgeRoute
   AdminEmotionRecRoute: typeof AdminEmotionRecRoute
   AdminIngestRoute: typeof AdminIngestRoute
   AdminInvestorKpiRoute: typeof AdminInvestorKpiRoute
@@ -1390,6 +1431,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminAgenciesRoute: AdminAgenciesRoute,
   AdminAlertsRoute: AdminAlertsRoute,
   AdminAskLogsRoute: AdminAskLogsRoute,
+  AdminAssetForgeRoute: AdminAssetForgeRoute,
   AdminEmotionRecRoute: AdminEmotionRecRoute,
   AdminIngestRoute: AdminIngestRoute,
   AdminInvestorKpiRoute: AdminInvestorKpiRoute,
@@ -1456,6 +1498,7 @@ const rootRouteChildren: RootRouteChildren = {
   TipsIndexRoute: TipsIndexRoute,
   CommunityCSlugRoute: CommunityCSlugRoute,
   CommunityPostPostIdRoute: CommunityPostPostIdRoute,
+  ApiInternalAssetForgePollRoute: ApiInternalAssetForgePollRoute,
   ApiInternalCallJobsRunRoute: ApiInternalCallJobsRunRoute,
   ApiInternalExtractionRunRoute: ApiInternalExtractionRunRoute,
   ApiInternalNotificationsDispatchRoute: ApiInternalNotificationsDispatchRoute,
