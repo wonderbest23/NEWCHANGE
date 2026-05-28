@@ -6,10 +6,15 @@
 2. (선택) `VITE_BETA_GAME_GATE` → `?key=비밀값`
 3. `VITE_BETA_GAME_ENABLED=0` 이면 비활성
 
-## DB
+## DB (SQL Editor에 한 번에 붙여넣기)
 
-1. `docs/schema/007_beta_walk_monster_game.sql` — 프로필·스폰·포획
-2. `docs/schema/008_game_inventory.sql` — 가방·아이템
+**파일:** [`docs/schema/apply_beta_walk_monster.sql`](schema/apply_beta_walk_monster.sql)
+
+1. Supabase 대시보드 → **SQL Editor** → New query
+2. 위 파일 **전체** 복사 → Run
+3. (선택) 하단 확인 쿼리로 `game_*` 테이블 4개 확인
+
+개별 적용: `007_beta_walk_monster_game.sql`, `008_game_inventory.sql`
 
 ## 플레이 (베타 1)
 

@@ -7,6 +7,7 @@ import { GAME_ITEMS, type GameItemKey } from "@/lib/game/items";
 import {
   purchaseWalkMonsterItem,
   useWalkMonsterBooster,
+  useWalkMonsterRadarExtender,
 } from "@/lib/game/walk-monster-actions";
 
 type InvRow = { item_key: string; quantity: number };
@@ -51,6 +52,21 @@ export function GameInventoryPanel({ inventory, coins }: Props) {
     },
   });
 
+  const radarMut = useMutation({
+    mutationFn: async () =>
+      useWalkMonsterRadarExtender({
+        headers: await authHeaders(),
+      } as Parameters<typeof useWalkMonsterRadarExtender>[0]),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error("레이더 확장기가 없어요");
+        return;
+      }
+      toast.success("포획 반경이 30분간 +20m 늘어났어요");
+      qc.invalidateQueries({ queryKey: ["walk-monster-profile"] });
+    },
+  });
+
   return (
     <Card className="space-y-3 border-border p-4">
       <div className="flex items-center justify-between">
@@ -83,6 +99,17 @@ export function GameInventoryPanel({ inventory, coins }: Props) {
                     className="h-8 text-xs"
                     disabled={boosterMut.isPending}
                     onClick={() => boosterMut.mutate()}
+                  >
+                    사용
+                  </Button>
+                )}
+                {key === "radar_extender" && count > 0 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-8 text-xs"
+                    disabled={radarMut.isPending}
+                    onClick={() => radarMut.mutate()}
                   >
                     사용
                   </Button>

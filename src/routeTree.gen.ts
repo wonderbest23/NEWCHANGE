@@ -69,6 +69,7 @@ import { Route as ApiPublicCommunityAutoreactRouteImport } from './routes/api/pu
 import { Route as ApiPublicCommunityAutopostRouteImport } from './routes/api/public/community/autopost'
 import { Route as ApiPublicCommunityAutocommentRouteImport } from './routes/api/public/community/autocomment'
 import { Route as ApiInternalRulesRunRouteImport } from './routes/api/internal/rules.run'
+import { Route as ApiInternalPushSendRouteImport } from './routes/api/internal/push.send'
 import { Route as ApiInternalNotificationsDispatchRouteImport } from './routes/api/internal/notifications.dispatch'
 import { Route as ApiInternalExtractionRunRouteImport } from './routes/api/internal/extraction.run'
 import { Route as ApiInternalCallJobsRunRouteImport } from './routes/api/internal/call-jobs.run'
@@ -379,6 +380,11 @@ const ApiInternalRulesRunRoute = ApiInternalRulesRunRouteImport.update({
   path: '/api/internal/rules/run',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiInternalPushSendRoute = ApiInternalPushSendRouteImport.update({
+  id: '/api/internal/push/send',
+  path: '/api/internal/push/send',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiInternalNotificationsDispatchRoute =
   ApiInternalNotificationsDispatchRouteImport.update({
     id: '/api/internal/notifications/dispatch',
@@ -455,6 +461,7 @@ export interface FileRoutesByFullPath {
   '/api/internal/call-jobs/run': typeof ApiInternalCallJobsRunRoute
   '/api/internal/extraction/run': typeof ApiInternalExtractionRunRoute
   '/api/internal/notifications/dispatch': typeof ApiInternalNotificationsDispatchRoute
+  '/api/internal/push/send': typeof ApiInternalPushSendRoute
   '/api/internal/rules/run': typeof ApiInternalRulesRunRoute
   '/api/public/community/autocomment': typeof ApiPublicCommunityAutocommentRoute
   '/api/public/community/autopost': typeof ApiPublicCommunityAutopostRoute
@@ -519,6 +526,7 @@ export interface FileRoutesByTo {
   '/api/internal/call-jobs/run': typeof ApiInternalCallJobsRunRoute
   '/api/internal/extraction/run': typeof ApiInternalExtractionRunRoute
   '/api/internal/notifications/dispatch': typeof ApiInternalNotificationsDispatchRoute
+  '/api/internal/push/send': typeof ApiInternalPushSendRoute
   '/api/internal/rules/run': typeof ApiInternalRulesRunRoute
   '/api/public/community/autocomment': typeof ApiPublicCommunityAutocommentRoute
   '/api/public/community/autopost': typeof ApiPublicCommunityAutopostRoute
@@ -586,6 +594,7 @@ export interface FileRoutesById {
   '/api/internal/call-jobs/run': typeof ApiInternalCallJobsRunRoute
   '/api/internal/extraction/run': typeof ApiInternalExtractionRunRoute
   '/api/internal/notifications/dispatch': typeof ApiInternalNotificationsDispatchRoute
+  '/api/internal/push/send': typeof ApiInternalPushSendRoute
   '/api/internal/rules/run': typeof ApiInternalRulesRunRoute
   '/api/public/community/autocomment': typeof ApiPublicCommunityAutocommentRoute
   '/api/public/community/autopost': typeof ApiPublicCommunityAutopostRoute
@@ -654,6 +663,7 @@ export interface FileRouteTypes {
     | '/api/internal/call-jobs/run'
     | '/api/internal/extraction/run'
     | '/api/internal/notifications/dispatch'
+    | '/api/internal/push/send'
     | '/api/internal/rules/run'
     | '/api/public/community/autocomment'
     | '/api/public/community/autopost'
@@ -718,6 +728,7 @@ export interface FileRouteTypes {
     | '/api/internal/call-jobs/run'
     | '/api/internal/extraction/run'
     | '/api/internal/notifications/dispatch'
+    | '/api/internal/push/send'
     | '/api/internal/rules/run'
     | '/api/public/community/autocomment'
     | '/api/public/community/autopost'
@@ -784,6 +795,7 @@ export interface FileRouteTypes {
     | '/api/internal/call-jobs/run'
     | '/api/internal/extraction/run'
     | '/api/internal/notifications/dispatch'
+    | '/api/internal/push/send'
     | '/api/internal/rules/run'
     | '/api/public/community/autocomment'
     | '/api/public/community/autopost'
@@ -832,6 +844,7 @@ export interface RootRouteChildren {
   ApiInternalCallJobsRunRoute: typeof ApiInternalCallJobsRunRoute
   ApiInternalExtractionRunRoute: typeof ApiInternalExtractionRunRoute
   ApiInternalNotificationsDispatchRoute: typeof ApiInternalNotificationsDispatchRoute
+  ApiInternalPushSendRoute: typeof ApiInternalPushSendRoute
   ApiInternalRulesRunRoute: typeof ApiInternalRulesRunRoute
   ApiPublicCommunityAutocommentRoute: typeof ApiPublicCommunityAutocommentRoute
   ApiPublicCommunityAutopostRoute: typeof ApiPublicCommunityAutopostRoute
@@ -1269,6 +1282,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiInternalRulesRunRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/internal/push/send': {
+      id: '/api/internal/push/send'
+      path: '/api/internal/push/send'
+      fullPath: '/api/internal/push/send'
+      preLoaderRoute: typeof ApiInternalPushSendRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/internal/notifications/dispatch': {
       id: '/api/internal/notifications/dispatch'
       path: '/api/internal/notifications/dispatch'
@@ -1397,6 +1417,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInternalCallJobsRunRoute: ApiInternalCallJobsRunRoute,
   ApiInternalExtractionRunRoute: ApiInternalExtractionRunRoute,
   ApiInternalNotificationsDispatchRoute: ApiInternalNotificationsDispatchRoute,
+  ApiInternalPushSendRoute: ApiInternalPushSendRoute,
   ApiInternalRulesRunRoute: ApiInternalRulesRunRoute,
   ApiPublicCommunityAutocommentRoute: ApiPublicCommunityAutocommentRoute,
   ApiPublicCommunityAutopostRoute: ApiPublicCommunityAutopostRoute,

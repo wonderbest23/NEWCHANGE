@@ -55,6 +55,8 @@ type ProfileRow = {
   last_lat: number | null;
   last_lng: number | null;
   location_consent_at: string | null;
+  /** 레이더 확장기 버프 만료 시점 (radar_extender_until). NULL=비활성. */
+  radar_extender_until?: string | null;
 };
 
 type SpawnRow = {
@@ -153,6 +155,18 @@ async function adjustInventory(
   return true;
 }
 
+/**
+ * 인벤토리에서 1개 소비를 시도. 성공 시 true.
+ * adjustInventory(-1) 의 thin wrapper로, 의도 가독성 ↑.
+ */
+async function tryConsumeItem(
+  supabase: { from: (t: string) => any },
+  userId: string,
+  itemKey: string,
+): Promise<boolean> {
+  return adjustInventory(supabase, userId, itemKey, -1);
+}
+
 function offsetSpawnLatLng(lat: number, lng: number): { lat: number; lng: number } {
   const angle = Math.random() * Math.PI * 2;
   const distM = 20 + Math.random() * 40;
@@ -163,16 +177,27 @@ function offsetSpawnLatLng(lat: number, lng: number): { lat: number; lng: number
 
 function enrichSpawns(
   spawns: SpawnRow[],
-  userLat?: number,
-  userLng?: number,
+  userLat: number | undefined,
+  userLng: number | undefined,
+  effectiveRadiusM: number,
 ): Array<SpawnRow & { distance_m: number | null; in_range: boolean }> {
   return spawns.map((s) => {
     if (userLat == null || userLng == null) {
       return { ...s, distance_m: null, in_range: false };
     }
     const distance_m = Math.round(haversineM(userLat, userLng, s.latitude, s.longitude));
-    return { ...s, distance_m, in_range: distance_m <= CATCH_RADIUS_M };
+    return { ...s, distance_m, in_range: distance_m <= effectiveRadiusM };
   });
+}
+
+function effectiveCatchRadius(profile: ProfileRow): number {
+  if (profile.radar_extender_until) {
+    const until = new Date(profile.radar_extender_until).getTime();
+    if (!Number.isNaN(until) && until > Date.now()) {
+      return CATCH_RADIUS_M + 20;
+    }
+  }
+  return CATCH_RADIUS_M;
 }
 
 export const getWalkMonsterProfile = createServerFn({ method: "GET" })
@@ -208,7 +233,13 @@ export const getWalkMonsterProfile = createServerFn({ method: "GET" })
       .eq("user_id", userId)
       .gte("created_at", todayStart);
 
-    const active = enrichSpawns((spawns ?? []) as SpawnRow[], data?.latitude, data?.longitude);
+    const effRadius = effectiveCatchRadius(profile);
+    const active = enrichSpawns(
+      (spawns ?? []) as SpawnRow[],
+      data?.latitude,
+      data?.longitude,
+      effRadius,
+    );
 
     return {
       profile: {
@@ -220,7 +251,8 @@ export const getWalkMonsterProfile = createServerFn({ method: "GET" })
         spawn_progress_m: Math.round(profile.spawn_progress_m),
         spawn_threshold_m: SPAWN_DISTANCE_M,
         has_consent: !!profile.location_consent_at,
-        catch_radius_m: CATCH_RADIUS_M,
+        catch_radius_m: effRadius,
+        radar_extender_until: profile.radar_extender_until ?? null,
       },
       active_spawns: active,
       inventory,
@@ -287,7 +319,15 @@ export const syncWalkMonsterSession = createServerFn({ method: "POST" })
 
     while (spawnProgress >= SPAWN_DISTANCE_M) {
       spawnProgress -= SPAWN_DISTANCE_M;
-      const monster = pickMonster(profile.level);
+
+      // 행운 부적 (lucky_charm) 이 있으면 1회 소비 후 luckyBoost 활성화.
+      // 활성화되면 monster 선택 시 rare/legendary 확률 2배로 다시 굴린다.
+      const lucky = await tryConsumeItem(supabase, userId, "lucky_charm");
+      let monster = pickMonster(profile.level);
+      if (lucky && monster.rarity === "common") {
+        // 한 번 더 굴리는 효과 (2x 효과)
+        monster = pickMonster(profile.level + 3);
+      }
       const offset = offsetSpawnLatLng(data.latitude, data.longitude);
       const expiresAt = new Date(Date.now() + SPAWN_TTL_MIN * 60_000).toISOString();
 
@@ -319,7 +359,12 @@ export const syncWalkMonsterSession = createServerFn({ method: "POST" })
       .eq("user_id", userId);
     if (upErr) throw upErr;
 
-    const enriched = enrichSpawns(newSpawns, data.latitude, data.longitude);
+    const enriched = enrichSpawns(
+      newSpawns,
+      data.latitude,
+      data.longitude,
+      effectiveCatchRadius(profile),
+    );
 
     return {
       ok: true as const,
@@ -345,8 +390,22 @@ export const catchWalkMonster = createServerFn({ method: "POST" })
       .eq("user_id", userId)
       .gte("created_at", todayStart);
 
-    if ((catchesToday ?? 0) >= DAILY_CATCH_LIMIT) {
-      return { ok: false as const, reason: "daily_limit" as const };
+    // 일일 한도 초과 시 — revive_heart(재도전 하트) 가 있으면 1개 소비 후 +5 연장.
+    // 이미 한도+5 도 넘었으면 더는 안 됨.
+    const baseLimit = DAILY_CATCH_LIMIT;
+    const todayCount = catchesToday ?? 0;
+    if (todayCount >= baseLimit) {
+      const overage = todayCount - baseLimit; // 0,1,2,3,4 이면 추가 가능 (하트가 있다면)
+      if (overage >= 5) {
+        return { ok: false as const, reason: "daily_limit" as const };
+      }
+      // overage===0 일 때 하트 1개를 처음 소비. overage>=1이면 이미 하트 효과 안에 있음.
+      if (overage === 0) {
+        const consumed = await tryConsumeItem(supabase, userId, "revive_heart");
+        if (!consumed) {
+          return { ok: false as const, reason: "daily_limit" as const };
+        }
+      }
     }
 
     const { data: spawn, error: spawnErr } = await supabase
@@ -365,12 +424,13 @@ export const catchWalkMonster = createServerFn({ method: "POST" })
     }
 
     const distM = haversineM(data.latitude, data.longitude, spawn.latitude, spawn.longitude);
-    if (distM > CATCH_RADIUS_M + 15) {
+    const effRadius = effectiveCatchRadius(profile);
+    if (distM > effRadius + 15) {
       return {
         ok: false as const,
         reason: "too_far" as const,
         distance_m: Math.round(distM),
-        required_m: CATCH_RADIUS_M,
+        required_m: effRadius,
       };
     }
 
@@ -378,6 +438,7 @@ export const catchWalkMonster = createServerFn({ method: "POST" })
     const rewards = RARITY_META[rarity] ?? RARITY_META.common;
     let bonusCoins = 0;
     let usedOrb = false;
+    let xpMultiplier = 1;
 
     if (data.use_orb) {
       const consumed = await adjustInventory(supabase, userId, "capture_orb", -1);
@@ -387,14 +448,20 @@ export const catchWalkMonster = createServerFn({ method: "POST" })
       }
     }
 
-    const newXp = profile.xp + rewards.xp;
+    // XP 두배권 — 가지고 있으면 자동 소비, 이번 포획 XP 2배.
+    // (사용자 선택 UI는 추후, 현재는 항상 적용 — "있으면 좋은 결과" 자동 적용)
+    const xpBoosted = await tryConsumeItem(supabase, userId, "xp_doubler");
+    if (xpBoosted) xpMultiplier = 2;
+
+    const xpGained = rewards.xp * xpMultiplier;
+    const newXp = profile.xp + xpGained;
     const newLevel = levelFromXp(newXp);
     const newCoins = profile.coins + rewards.coins + bonusCoins;
 
     const { error: catchErr } = await supabase.from("game_catches" as any).insert({
       user_id: userId,
       spawn_id: data.spawn_id,
-      xp_gained: rewards.xp,
+      xp_gained: xpGained,
       coins_gained: rewards.coins + bonusCoins,
     });
     if (catchErr) {
@@ -423,9 +490,10 @@ export const catchWalkMonster = createServerFn({ method: "POST" })
       monster_name: def?.name ?? spawn.monster_key,
       monster_emoji: def?.emoji ?? "✨",
       rarity,
-      xp_gained: rewards.xp,
+      xp_gained: xpGained,
       coins_gained: rewards.coins + bonusCoins,
       used_orb: usedOrb,
+      xp_doubled: xpBoosted,
       level: newLevel,
       total_xp: newXp,
       total_coins: newCoins,
@@ -461,6 +529,23 @@ export const purchaseWalkMonsterItem = createServerFn({ method: "POST" })
     return { ok: true as const, item_key: item.key, coins_left: profile.coins - item.price };
   });
 
+export const useWalkMonsterRadarExtender = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+    const consumed = await tryConsumeItem(supabase, userId, "radar_extender");
+    if (!consumed) {
+      return { ok: false as const, reason: "no_item" as const };
+    }
+    const until = new Date(Date.now() + 30 * 60_000).toISOString();
+    const { error } = await supabase
+      .from("game_profiles" as any)
+      .update({ radar_extender_until: until, updated_at: new Date().toISOString() })
+      .eq("user_id", userId);
+    if (error) throw error;
+    return { ok: true as const, until };
+  });
+
 export const useWalkMonsterBooster = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -486,21 +571,36 @@ export const getWalkMonsterLeaderboard = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { userId } = context;
 
-    const { data: rows, error } = await supabaseAdmin
-      .from("game_profiles" as any)
-      .select("user_id, total_catches, level, xp")
-      .order("total_catches", { ascending: false })
-      .limit(15);
-    if (error) throw error;
+    // game_leaderboard_v 는 rank() window 함수로 정확한 순위 부여.
+    // top 10 + 본인 행을 각각 조회한다.
+    const { data: topRows, error: topErr } = await supabaseAdmin
+      .from("game_leaderboard_v" as any)
+      .select("user_id, total_catches, level, xp, rank")
+      .order("rank", { ascending: true })
+      .limit(10);
+    if (topErr) throw topErr;
 
-    const list = (rows ?? []) as Array<{
+    const list = (topRows ?? []) as unknown as Array<{
       user_id: string;
       total_catches: number;
       level: number;
       xp: number;
+      rank: number;
     }>;
+
+    // 본인 행을 뷰에서 직접 조회 (top 10 안에 있어도 동일하게 조회 — RTT 작아 OK).
+    const { data: meRow } = await supabaseAdmin
+      .from("game_leaderboard_v" as any)
+      .select("user_id, total_catches, level, xp, rank")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const me = meRow as unknown as
+      | { user_id: string; total_catches: number; level: number; xp: number; rank: number }
+      | null;
+
     const ids = list.map((r) => r.user_id);
-    if (!ids.includes(userId)) ids.push(userId);
+    if (me && !ids.includes(userId)) ids.push(userId);
 
     const { data: profs } = ids.length
       ? await supabaseAdmin.from("profiles").select("id, nickname").in("id", ids)
@@ -513,8 +613,8 @@ export const getWalkMonsterLeaderboard = createServerFn({ method: "GET" })
       ]),
     );
 
-    const top = list.slice(0, 10).map((r, i) => ({
-      rank: i + 1,
+    const top = list.map((r) => ({
+      rank: r.rank,
       user_id: r.user_id,
       nickname: nameMap.get(r.user_id) ?? "이웃",
       total_catches: r.total_catches,
@@ -522,24 +622,16 @@ export const getWalkMonsterLeaderboard = createServerFn({ method: "GET" })
       is_me: r.user_id === userId,
     }));
 
-    const myRow = list.find((r) => r.user_id === userId);
-    const myRank = list.findIndex((r) => r.user_id === userId);
-
     return {
       top,
-      me: myRow
+      me: me
         ? {
-            rank: myRank >= 0 ? myRank + 1 : list.length + 1,
+            rank: me.rank,
             nickname: nameMap.get(userId) ?? "나",
-            total_catches: myRow.total_catches,
-            level: myRow.level,
+            total_catches: me.total_catches,
+            level: me.level,
           }
-        : {
-            rank: list.length + 1,
-            nickname: "나",
-            total_catches: 0,
-            level: 1,
-          },
+        : null,
     };
   });
 

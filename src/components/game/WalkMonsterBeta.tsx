@@ -31,6 +31,8 @@ import { MonsterCatchCamera } from "@/components/game/MonsterCatchCamera";
 import { SpawnRadarMap } from "@/components/game/SpawnRadarMap";
 import { GameInventoryPanel } from "@/components/game/GameInventoryPanel";
 import { GameLeaderboard } from "@/components/game/GameLeaderboard";
+import { useGameCatchFeed } from "@/hooks/useGameCatchFeed";
+import { supabase } from "@/integrations/supabase/client";
 
 type ActiveSpawn = {
   id: string;
@@ -51,18 +53,40 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
   const [catchTarget, setCatchTarget] = useState<ActiveSpawn | null>(null);
   const [tapCount, setTapCount] = useState(0);
   const [useOrb, setUseOrb] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const lastPosRef = useRef<{ lat: number; lng: number; t: number } | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const pendingSyncRef = useRef(false);
 
+  // 본인 user_id 확인 (realtime feed 에서 자기 자신은 제외하기 위함).
+  useEffect(() => {
+    void supabase.auth.getUser().then(({ data }) => {
+      if (data.user?.id) setCurrentUserId(data.user.id);
+    });
+  }, []);
+
+  // 다른 플레이어 포획 broadcast 구독.
+  useGameCatchFeed(currentUserId);
+
+  // Position is quantized to ~50m grid for the query key so the profile is not
+  // refetched every 3-5s while walking. distance_m on spawns is derived
+  // client-side anyway, so the server doesn't need fresh sub-50m precision here.
+  const posBucket = userPos
+    ? {
+        lat: Math.round(userPos.lat * 2000) / 2000, // ~50m
+        lng: Math.round(userPos.lng * 2000) / 2000,
+      }
+    : null;
   const profileQ = useQuery({
-    queryKey: ["walk-monster-profile", userPos?.lat, userPos?.lng],
+    queryKey: ["walk-monster-profile", posBucket?.lat, posBucket?.lng],
     queryFn: async () =>
       getWalkMonsterProfile({
         data: userPos ? { latitude: userPos.lat, longitude: userPos.lng } : undefined,
         headers: await authHeaders(),
       } as Parameters<typeof getWalkMonsterProfile>[0]),
     enabled: !gateError,
+    staleTime: 15_000,
+    retry: 1,
   });
 
   const inventory = profileQ.data?.inventory ?? [];
@@ -287,6 +311,20 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
     );
   }
 
+  if (profileQ.isError) {
+    return (
+      <div className="mx-auto max-w-lg space-y-4 px-4 py-16 text-center">
+        <p className="text-lg text-foreground/80">
+          프로필을 불러오지 못했어요.
+        </p>
+        <p className="text-xs text-foreground/55">
+          {profileQ.error instanceof Error ? profileQ.error.message : "잠시 후 다시 시도해 주세요."}
+        </p>
+        <Button onClick={() => profileQ.refetch()}>다시 시도</Button>
+      </div>
+    );
+  }
+
   const data = profileQ.data;
   const profile = data?.profile;
   const spawns = (data?.active_spawns ?? []) as ActiveSpawn[];
@@ -475,11 +513,16 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
       {catchTarget && (
         <MonsterCatchCamera
           monsterKey={catchTarget.monster_key}
+          rarity={catchTarget.rarity}
           rarityLabel={RARITY_META[catchTarget.rarity].label}
-          tapCount={tapCount}
-          tapsRequired={tapsRequired}
+          hits={tapCount}
+          hitsRequired={tapsRequired}
           useOrb={useOrb && orbQty > 0}
-          onTap={handleCatchTap}
+          onHit={handleCatchTap}
+          onMiss={() => {
+            // 조준 빗나감/리듬 빗나감 — 가벼운 피드백만 (UX: 너무 짜게 굴면 짜증)
+            // 향후 streak 감점 등 추가 가능.
+          }}
           onClose={() => {
             setCatchTarget(null);
             setTapCount(0);

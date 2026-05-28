@@ -19,6 +19,29 @@ type Props = {
   catchRadiusM: number;
 };
 
+// Google Maps Static API 키가 env 에 있으면 위성/지도 배경 타일을 깔고,
+// 없으면 기존 그라데이션 원형 배경 fallback. 키 부재해도 게임은 정상 동작.
+function staticMapUrl(lat: number, lng: number, sizePx: number): string | null {
+  const key =
+    typeof import.meta !== "undefined"
+      ? (import.meta as { env?: Record<string, string> }).env?.VITE_GOOGLE_MAPS_STATIC_KEY
+      : undefined;
+  if (!key) return null;
+
+  // zoom 17 ~= ~150m 직경. RADAR_RANGE_M 120m 가량을 적절히 덮음.
+  // scale=2: 레티나 해상도.
+  const params = new URLSearchParams({
+    center: `${lat},${lng}`,
+    zoom: "17",
+    size: `${sizePx}x${sizePx}`,
+    scale: "2",
+    maptype: "roadmap",
+    style: "feature:poi|visibility:off",
+    key,
+  });
+  return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
+}
+
 export function SpawnRadarMap({ userLat, userLng, spawns, catchRadiusM }: Props) {
   const size = 220;
   const center = size / 2;
@@ -37,10 +60,23 @@ export function SpawnRadarMap({ userLat, userLng, spawns, catchRadiusM }: Props)
     );
   }
 
+  const mapUrl = staticMapUrl(userLat, userLng, size);
+
   return (
     <div className="relative mx-auto" style={{ width: size, height: size }}>
+      {mapUrl ? (
+        <img
+          src={mapUrl}
+          alt=""
+          aria-hidden
+          className="absolute inset-0 h-full w-full rounded-full object-cover opacity-80"
+        />
+      ) : null}
       <div
-        className="absolute inset-0 rounded-full border-2 border-primary/25 bg-gradient-to-b from-primary/5 to-sage/10"
+        className={cn(
+          "absolute inset-0 rounded-full border-2 border-primary/25",
+          mapUrl ? "bg-primary/5" : "bg-gradient-to-b from-primary/5 to-sage/10",
+        )}
         aria-hidden
       />
       <div

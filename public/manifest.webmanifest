@@ -1,0 +1,42 @@
+{
+  "name": "곁 — 산책 몬스터",
+  "short_name": "곁",
+  "description": "가족 돌봄 + 산책하며 몬스터를 잡는 위치 기반 AR 게임",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#22c55e",
+  "categories": ["lifestyle", "health", "games"],
+  "lang": "ko-KR",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "산책 몬스터",
+      "short_name": "산책",
+      "url": "/beta/walk-monster",
+      "description": "걸으며 몬스터를 잡는 베타 게임"
+    },
+    {
+      "name": "안부 통화",
+      "short_name": "안부",
+      "url": "/guardian/dashboard",
+      "description": "오늘의 부모님 안부 결과"
+    }
+  ]
+}

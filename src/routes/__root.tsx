@@ -6,6 +6,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { MockAuthProvider } from "@/lib/auth/mock-auth";
 import { supabase } from "@/integrations/supabase/client";
 import { resumePendingCheckinSave } from "@/lib/checkin/background-save";
+import { registerServiceWorker } from "@/lib/pwa/register";
+import { PwaInstallPrompt } from "@/components/pwa/InstallPrompt";
 
 import appCss from "../styles.css?url";
 
@@ -101,9 +103,17 @@ export const Route = createRootRoute({
       { name: "twitter:description", content: "보호자, 시니어, 돌봄 파트너가 한 곳에서 안부와 일상을 나누는 가족 돌봄 서비스." },
       { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/c94c5f85-151c-442c-adb3-c6e9153e6aea/id-preview-d924a9e6--9ba8150a-7373-4385-86ff-9c69e7e2800b.lovable.app-1777529461882.png" },
       { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/c94c5f85-151c-442c-adb3-c6e9153e6aea/id-preview-d924a9e6--9ba8150a-7373-4385-86ff-9c69e7e2800b.lovable.app-1777529461882.png" },
+      { name: "theme-color", content: "#22c55e" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "default" },
+      { name: "apple-mobile-web-app-title", content: "곁" },
+      { name: "mobile-web-app-capable", content: "yes" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "apple-touch-icon", href: "/logo.png" },
+      { rel: "icon", type: "image/png", href: "/logo.png" },
     ],
   }),
   shellComponent: RootShell,
@@ -178,10 +188,17 @@ function RootComponent() {
     resumePendingCheckinSave();
   }, []);
 
+  // PWA Service Worker 등록. 첫 방문에는 install, 이후엔 기존 등록 재사용.
+  // 실패는 silent (dev 환경/지원하지 않는 브라우저는 그냥 무시).
+  useEffect(() => {
+    void registerServiceWorker();
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <MockAuthProvider>
         <Outlet />
+        <PwaInstallPrompt />
         <Toaster position="top-center" />
       </MockAuthProvider>
     </QueryClientProvider>

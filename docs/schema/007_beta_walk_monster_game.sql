@@ -1,4 +1,5 @@
 -- Supabase SQL Editor용 (migration 20260527120000 와 동일)
+-- 한 번에 적용: apply_beta_walk_monster.sql (007+008 통합)
 
 CREATE TABLE IF NOT EXISTS public.game_profiles (
   user_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
