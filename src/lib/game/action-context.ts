@@ -17,6 +17,21 @@ import type { ReactNode } from "react";
 import type { ArSpawn } from "@/components/game/ARWalkSession";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 낚시 단계 — 카메라 위 가상 낚시터의 명확한 상태머신
+// ─────────────────────────────────────────────────────────────────────────────
+export type FishingPhase =
+  | "spot_select" // 근처 낚시터 찾는 중
+  | "ready" // 낚싯대 들고 대기
+  | "casting" // 캐스팅 힘 충전 중
+  | "floating" // 찌 공중 비행 중
+  | "waiting" // 찌 물 위에서 입질 대기
+  | "bite" // 입질 발생 — 챔질 윈도우
+  | "fighting" // 힘겨루기 (텐션 게임)
+  | "caught" // 잡힘 — 보상 직전
+  | "escaped" // 놓침
+  | "reward"; // 보상 화면
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 컨텍스트: 지금 사용자가 무엇을 하고 있는가
 // ─────────────────────────────────────────────────────────────────────────────
 export type GameContext =
@@ -29,8 +44,16 @@ export type GameContext =
     }
   | { kind: "aimed"; monster: ArSpawn; captureMode: "aim" | "tap" | "rhythm" }
   | { kind: "capturing"; monster: ArSpawn; progress: number /* 0..1 */ }
-  // 미래 모드 — 시그니처만 정의. UI 구현은 단계적 추가.
-  | { kind: "fishing"; phase: "ready" | "casting" | "waiting" | "biting" | "reeling" }
+  // 낚시 — 10단계 상태머신
+  | {
+      kind: "fishing";
+      phase: FishingPhase;
+      spotName?: string;
+      nearbyPlayers?: number;
+      castPower?: number;
+      tension?: number;
+      fishName?: string;
+    }
   | { kind: "pet"; petKey: string; mood: "happy" | "hungry" | "sleepy" | "playful" }
   | { kind: "coop"; partnerName: string; partnerKey: string; pairId: string };
 
@@ -92,10 +115,20 @@ export type ActionId =
   | "refresh_position"
   | "force_spawn"
   | "exit"
-  // 미래 모드용
-  | "fishing_cast"
+  // 낚시 모드
+  | "fishing_enter_spot"
+  | "fishing_cast_start"
+  | "fishing_cast_release"
+  | "fishing_jiggle"
+  | "fishing_hook"
   | "fishing_reel"
+  | "fishing_loosen"
+  | "fishing_tighten"
   | "fishing_bait"
+  | "fishing_rod"
+  | "fishing_reward"
+  | "fishing_retry"
+  | "fishing_exit"
   | "pet_feed"
   | "pet_play"
   | "pet_pet"
@@ -154,17 +187,72 @@ export function blueprintFor(ctx: GameContext): ActionBlueprint {
         },
         secondaryIds: ["menu"],
       };
-    case "fishing":
-      return {
-        primary:
-          ctx.phase === "ready"
-            ? { id: "fishing_cast", label: "캐스팅", sublabel: "길게 눌러 던지기", tone: "blue", holdable: true }
-            : ctx.phase === "biting"
-              ? { id: "fishing_reel", label: "당겨!", sublabel: "지금 입질이 와요", tone: "amber", pulse: true }
-              : { id: "fishing_reel", label: "릴 감기", sublabel: "기다리는 중", tone: "neutral", disabled: ctx.phase !== "reeling" },
-        secondaryIds: ["fishing_bait", "menu"],
-        centerHintKey: `fishing.${ctx.phase}`,
-      };
+    case "fishing": {
+      const baseSecondary: ActionId[] = ["fishing_bait", "fishing_rod", "fishing_exit"];
+      switch (ctx.phase) {
+        case "spot_select":
+          return {
+            primary: { id: "fishing_enter_spot", label: "낚시터 입장", sublabel: ctx.spotName, tone: "blue" },
+            secondaryIds: ["menu", "fishing_exit"],
+            centerHintKey: "fishing.spot_select",
+          };
+        case "ready":
+          return {
+            primary: { id: "fishing_cast_start", label: "캐스팅", sublabel: "길게 눌러 충전", tone: "blue", holdable: true },
+            secondaryIds: baseSecondary,
+            centerHintKey: "fishing.ready",
+          };
+        case "casting":
+          return {
+            primary: { id: "fishing_cast_release", label: "놓기!", sublabel: `힘 ${Math.round((ctx.castPower ?? 0) * 100)}%`, tone: "amber" },
+            secondaryIds: baseSecondary,
+            centerHintKey: "fishing.casting",
+          };
+        case "floating":
+          return {
+            primary: { id: "fishing_jiggle", label: "흔들기", sublabel: "물고기 유인", tone: "neutral" },
+            secondaryIds: baseSecondary,
+            centerHintKey: "fishing.floating",
+          };
+        case "waiting":
+          return {
+            primary: null,
+            secondaryIds: baseSecondary,
+            centerHintKey: "fishing.waiting",
+          };
+        case "bite":
+          return {
+            primary: { id: "fishing_hook", label: "챔질!", sublabel: "지금!", tone: "rose", pulse: true },
+            secondaryIds: ["menu"],
+            centerHintKey: "fishing.bite",
+          };
+        case "fighting":
+          return {
+            primary: { id: "fishing_reel", label: "릴 감기", sublabel: `텐션 ${Math.round((ctx.tension ?? 0) * 100)}%`, tone: "amber", holdable: true },
+            secondaryIds: ["fishing_loosen", "fishing_tighten"],
+            centerHintKey: "fishing.fighting",
+          };
+        case "caught":
+          return {
+            primary: { id: "fishing_reward", label: "보상 받기", sublabel: ctx.fishName, tone: "amber", pulse: true },
+            secondaryIds: ["menu"],
+            centerHintKey: "fishing.caught",
+          };
+        case "escaped":
+          return {
+            primary: { id: "fishing_retry", label: "다시 던지기", tone: "primary" },
+            secondaryIds: ["fishing_exit"],
+            centerHintKey: "fishing.escaped",
+          };
+        case "reward":
+          return {
+            primary: { id: "fishing_retry", label: "한 번 더", tone: "primary" },
+            secondaryIds: ["fishing_exit"],
+            centerHintKey: "fishing.reward",
+          };
+      }
+      return { primary: null, secondaryIds: [] };
+    }
     case "pet":
       return {
         primary: { id: "pet_pet", label: "쓰다듬기", tone: "primary" },
@@ -188,11 +276,16 @@ export const CENTER_HINTS: Record<string, string> = {
   "hiding.right": "오른쪽으로 천천히 돌리세요 →",
   "hiding.center": "거의 다 왔어요…",
   aimed: "정조준! 공격 버튼을 누르세요",
-  "fishing.ready": "강가에서 길게 눌러 던지기",
-  "fishing.casting": "캐스팅 중…",
-  "fishing.waiting": "입질을 기다려요",
-  "fishing.biting": "지금이에요! 당기세요",
-  "fishing.reeling": "릴 감는 중…",
+  "fishing.spot_select": "근처 공원 낚시터를 찾는 중…",
+  "fishing.ready": "버튼을 길게 눌러 찌를 던지세요",
+  "fishing.casting": "힘을 모은 뒤 손을 떼세요",
+  "fishing.floating": "찌가 물 위에 떠 있어요",
+  "fishing.waiting": "물결과 찌 움직임을 지켜보세요",
+  "fishing.bite": "지금이에요! 챔질하세요",
+  "fishing.fighting": "텐션을 초록 구간에 유지하세요",
+  "fishing.caught": "잡았어요!",
+  "fishing.escaped": "물고기가 도망갔어요…",
+  "fishing.reward": "보상 받기",
   "pet.happy": "기분이 좋아요",
   "pet.hungry": "배가 고파요",
   "pet.sleepy": "졸려해요",
