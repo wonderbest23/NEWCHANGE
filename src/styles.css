@@ -410,6 +410,14 @@
     0%   { opacity: 0; transform: translateY(24px); filter: blur(3px); }
     100% { opacity: 1; transform: translateY(0); filter: blur(0); }
   }
+  @keyframes calendar-month-in {
+    0%   { opacity: 0; transform: translateX(28px); }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes calendar-grid-in {
+    0%   { opacity: 0; transform: translateY(16px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
 
   .animate-emotion-spin     { animation: emotion-spin 18s linear infinite; }
   .animate-emotion-spin-rev { animation: emotion-spin-rev 26s linear infinite; }
@@ -422,6 +430,8 @@
   .animate-analysis-step    { animation: analysis-step 1.4s ease-in-out infinite; transform-origin: left center; }
   .animate-today-ring       { animation: today-ring 1.55s ease-in-out infinite; }
   .animate-axis-slide       { animation: axis-slide 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-calendar-month-in { animation: calendar-month-in 0.65s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-calendar-grid-in  { animation: calendar-grid-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
   @media (prefers-reduced-motion: reduce) {
     .animate-emotion-spin,

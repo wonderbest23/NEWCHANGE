@@ -1,7 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, BarChart3, Building2, Mic, Store, AlertTriangle, Lightbulb, MessageSquare, Settings2 } from "lucide-react";
+import { LayoutDashboard, BarChart3, Building2, Mic, Store, AlertTriangle, Lightbulb, MessageSquare, Settings2, Heart } from "lucide-react";
 import { SiteFooter } from "@/components/layouts/SiteFooter";
 
 const nav = [
@@ -9,6 +9,7 @@ const nav = [
   { to: "/admin/alerts", label: "주의 신호", icon: AlertTriangle },
   { to: "/admin/tips", label: "꿀팁", icon: Lightbulb },
   { to: "/admin/ask-logs", label: "AI 질문 로그", icon: MessageSquare },
+  { to: "/admin/emotion-rec", label: "감정 권고 피드백", icon: Heart },
   { to: "/admin/investor-kpi", label: "투자 지표 KPI", icon: BarChart3 },
   { to: "/admin/organization-pipeline", label: "기관 파이프라인", icon: Building2 },
   { to: "/admin/agencies", label: "대행업체 관리", icon: Store },

@@ -477,35 +477,35 @@ const TONE_LABEL: Record<string, string> = {
   calm_warm: "차분하고 따뜻함",
   low_energy_flat: "기력 저하 · 단조로움",
   bright_energetic: "활기참",
-  anxious_tense: "불안 · 긴장",
+  anxious_tense: "긴장감 있음",
   irritable: "예민함",
 };
 
 const RISK_LABEL: Record<string, string> = {
   mild_pain_sigh: "통증 한숨",
   low_energy: "활력 저하",
-  flattened_affect: "정서 둔화",
+  flattened_affect: "단조로운 말투",
   voice_tremor: "음성 떨림",
   rapid_speech: "말 빠름",
 };
 
 const FEATURE_LABEL: Record<string, { label: string; unit?: string; hint?: string }> = {
   pitch_hz_mean: { label: "평균 음높이", unit: "Hz", hint: "낮을수록 가라앉은 톤" },
-  pitch_variability: { label: "음높이 변동", hint: "낮을수록 단조로운 말투(정서 둔화 신호)" },
+  pitch_variability: { label: "음높이 변동", hint: "낮을수록 말투가 단조롭게 들릴 수 있음" },
   speech_rate_wpm: { label: "말 속도", unit: "wpm", hint: "정상 범위 110~150" },
-  avg_volume_db: { label: "평균 음량", unit: "dB", hint: "낮을수록 기력 저하 신호" },
+  avg_volume_db: { label: "평균 음량", unit: "dB", hint: "낮을수록 목소리 힘이 약하게 들릴 수 있음" },
   jitter: { label: "지터(떨림)", hint: "0.04 이상이면 음성 떨림" },
   shimmer: { label: "쉼머(거칢)", hint: "0.05 이상이면 음성 거칠어짐" },
   voice_breaks: { label: "끊김 횟수", hint: "통화 중 음성이 끊긴 횟수" },
-  laugh_count: { label: "웃음 횟수", hint: "긍정 정서 지표" },
+  laugh_count: { label: "웃음 횟수", hint: "밝은 반응의 참고 단서" },
 };
 
 const RISK_DETAIL: Record<string, string> = {
-  low_energy: "음량과 말 속도가 평소보다 낮아요. 기력이 떨어진 상태일 수 있어요.",
-  flattened_affect: "음높이 변동이 거의 없어요. 정서가 둔화된 상태일 수 있어 우울 신호로 봅니다.",
-  voice_tremor: "지터(미세 떨림)가 평소보다 높아요. 피로/불안/약물 영향 가능성이 있어요.",
-  rapid_speech: "말 속도가 빨라져 있어요. 불안하거나 긴장 상태일 수 있어요.",
-  mild_pain_sigh: "한숨 빈도가 늘었어요. 가벼운 통증/불편감이 있을 수 있어요.",
+  low_energy: "음량과 말 속도가 평소보다 낮게 기록됐어요. 컨디션을 한 번 확인해 주세요.",
+  flattened_affect: "음높이 변동이 적게 기록됐어요. 말투가 평소보다 단조롭게 들릴 수 있어요.",
+  voice_tremor: "미세한 음성 떨림이 평소보다 높게 기록됐어요. 피로하거나 긴장했을 때도 나타날 수 있어요.",
+  rapid_speech: "말 속도가 빨라져 있어요. 최근 불편한 일이나 급한 요청이 있었는지 확인해 주세요.",
+  mild_pain_sigh: "한숨 빈도가 늘었어요. 통증이나 불편감이 있었는지 확인해 주세요.",
 };
 
 function VoicePsychCard({ data }: { data: GuardianHomeData }) {
@@ -527,9 +527,9 @@ function VoicePsychCard({ data }: { data: GuardianHomeData }) {
 
   const scores: { key: string; label: string; v: number; tone: "rose" | "amber" | "sage" }[] = [
     { key: "energy", label: "활력", v: today.energy_score, tone: today.energy_score >= 55 ? "sage" : today.energy_score >= 35 ? "amber" : "rose" },
-    { key: "depression", label: "우울감", v: today.depression_score, tone: today.depression_score < 35 ? "sage" : today.depression_score < 60 ? "amber" : "rose" },
-    { key: "anxiety", label: "불안", v: today.anxiety_score, tone: today.anxiety_score < 35 ? "sage" : today.anxiety_score < 60 ? "amber" : "rose" },
-    { key: "fatigue", label: "피로", v: today.fatigue_score, tone: today.fatigue_score < 40 ? "sage" : today.fatigue_score < 65 ? "amber" : "rose" },
+    { key: "depression", label: "가라앉음", v: today.depression_score, tone: today.depression_score < 35 ? "sage" : today.depression_score < 60 ? "amber" : "rose" },
+    { key: "anxiety", label: "긴장감", v: today.anxiety_score, tone: today.anxiety_score < 35 ? "sage" : today.anxiety_score < 60 ? "amber" : "rose" },
+    { key: "fatigue", label: "피로 단서", v: today.fatigue_score, tone: today.fatigue_score < 40 ? "sage" : today.fatigue_score < 65 ? "amber" : "rose" },
   ];
 
   const dateLabel = new Date(today.analyzed_for_date).toLocaleDateString("ko-KR", {
@@ -558,7 +558,7 @@ function VoicePsychCard({ data }: { data: GuardianHomeData }) {
               <AudioLines className="h-3.5 w-3.5" />
             </span>
             <div className="leading-tight">
-              <p className="text-[12px] font-semibold text-foreground">음성 파형 심리분석</p>
+              <p className="text-[12px] font-semibold text-foreground">음성 패턴 참고</p>
               <p className="text-[11px] text-muted-foreground">
                 탭하여 자세히 보기 · {dateLabel}
               </p>
@@ -607,7 +607,7 @@ function VoicePsychCard({ data }: { data: GuardianHomeData }) {
           ))}
           {yesterday && (
             <span className="ml-auto text-[10px] text-muted-foreground">
-              어제 우울감 {yesterday.depression_score} → 오늘 {today.depression_score}
+              가라앉은 톤 {yesterday.depression_score} → {today.depression_score}
             </span>
           )}
         </div>
@@ -655,18 +655,18 @@ function VoicePsychDetailDialog({
   // 짧은 해석
   const interpretation = (() => {
     const parts: string[] = [];
-    if (today.depression_score >= 60) parts.push("우울 신호가 평소보다 두드러져요.");
+    if (today.depression_score >= 60) parts.push("가라앉은 톤이 평소보다 두드러져요.");
     else if (today.depression_score < 35) parts.push("정서적으로 안정된 톤이에요.");
-    if (today.energy_score < 40) parts.push("활력이 낮게 측정됐어요.");
-    if (today.anxiety_score >= 60) parts.push("불안 지표가 높게 나왔어요.");
-    if (today.fatigue_score >= 65) parts.push("피로감이 음성에서 감지돼요.");
+    if (today.energy_score < 40) parts.push("목소리 활력이 낮게 기록됐어요.");
+    if (today.anxiety_score >= 60) parts.push("긴장감 단서가 높게 기록됐어요.");
+    if (today.fatigue_score >= 65) parts.push("피로 단서가 음성 패턴에 보여요.");
     if (yesterday) {
       const diff = today.depression_score - yesterday.depression_score;
       if (Math.abs(diff) >= 10) {
         parts.push(
           diff > 0
-            ? `어제보다 우울감이 ${diff}p 올라갔어요.`
-            : `어제보다 우울감이 ${Math.abs(diff)}p 내려갔어요.`,
+            ? `어제보다 가라앉은 톤 점수가 ${diff}p 올라갔어요.`
+            : `어제보다 가라앉은 톤 점수가 ${Math.abs(diff)}p 내려갔어요.`,
         );
       }
     }
@@ -680,7 +680,7 @@ function VoicePsychDetailDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <AudioLines className="h-4 w-4 text-primary" />
-            음성 심리분석 상세
+            음성 패턴 상세
           </DialogTitle>
           <DialogDescription>
             {dateLabel} · 분석 시각 {analyzedAt}
@@ -701,7 +701,7 @@ function VoicePsychDetailDialog({
         {/* 점수 비교 */}
         <div>
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            심리 지표 (어제 비교)
+            음성 패턴 참고 지표
           </p>
           <div className="space-y-2">
             {scores.map((s) => {
@@ -770,14 +770,14 @@ function VoicePsychDetailDialog({
           </div>
         </div>
 
-        {/* 7일 위험 추이 타임라인 */}
+        {/* 7일 참고 추이 타임라인 */}
         <RiskTimelineChart history={history} />
 
         {/* 위험 신호 설명 */}
         {today.risk_flags && today.risk_flags.length > 0 && (
           <div>
             <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              위험 신호 해설
+              참고 신호 해설
             </p>
             <ul className="space-y-1.5">
               {today.risk_flags.map((f) => (
@@ -787,7 +787,7 @@ function VoicePsychDetailDialog({
                 >
                   <p className="font-semibold text-primary">⚠ {RISK_LABEL[f] ?? f}</p>
                   <p className="mt-0.5 text-foreground/90">
-                    {RISK_DETAIL[f] ?? "추가 관찰이 필요한 신호예요."}
+                    {RISK_DETAIL[f] ?? "추가 관찰이 필요한 참고 신호예요."}
                   </p>
                 </li>
               ))}
@@ -819,14 +819,14 @@ function RiskTimelineChart({ history }: { history: GuardianHomeData["voicePsych"
         month: "numeric",
         day: "numeric",
       }),
-      우울: h.depression_score,
-      불안: h.anxiety_score,
-      피로: h.fatigue_score,
+      가라앉음: h.depression_score,
+      긴장감: h.anxiety_score,
+      피로단서: h.fatigue_score,
       활력: h.energy_score,
     }));
   }, [history]);
 
-  // 위험 플래그 빈도 집계 (최근 7일)
+  // 참고 신호 빈도 집계 (최근 7일)
   const flagFreq = useMemo(() => {
     const map = new Map<string, number>();
     (history ?? []).slice(0, 7).forEach((h) =>
@@ -839,7 +839,7 @@ function RiskTimelineChart({ history }: { history: GuardianHomeData["voicePsych"
     return (
       <div className="rounded-2xl border border-border/60 bg-muted/30 p-3 text-center">
         <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          7일 위험 추이
+          7일 참고 추이
         </p>
         <p className="mt-2 text-[12px] text-muted-foreground">
           비교할 분석 기록이 부족해요. 데이터가 쌓이면 추세선이 표시돼요.
@@ -852,7 +852,7 @@ function RiskTimelineChart({ history }: { history: GuardianHomeData["voicePsych"
     <div className="rounded-2xl border border-border/60 bg-background p-3">
       <div className="mb-1.5 flex items-baseline justify-between">
         <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-          7일 위험 추이
+          7일 참고 추이
         </p>
         <p className="text-[10px] text-muted-foreground">{data.length}회 분석</p>
       </div>
@@ -888,21 +888,21 @@ function RiskTimelineChart({ history }: { history: GuardianHomeData["voicePsych"
             />
             <Line
               type="monotone"
-              dataKey="우울"
+              dataKey="가라앉음"
               stroke="hsl(var(--primary))"
               strokeWidth={2}
               dot={{ r: 2.5 }}
             />
             <Line
               type="monotone"
-              dataKey="불안"
+              dataKey="긴장감"
               stroke="#d97706"
               strokeWidth={2}
               dot={{ r: 2.5 }}
             />
             <Line
               type="monotone"
-              dataKey="피로"
+              dataKey="피로단서"
               stroke="#7c3aed"
               strokeWidth={2}
               dot={{ r: 2.5 }}
@@ -923,7 +923,7 @@ function RiskTimelineChart({ history }: { history: GuardianHomeData["voicePsych"
       {flagFreq.length > 0 && (
         <div className="mt-2 border-t border-border/50 pt-2">
           <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            위험 플래그 빈도 (7일)
+            참고 신호 빈도 (7일)
           </p>
           <div className="flex flex-wrap gap-1.5">
             {flagFreq.map(([flag, count]) => (
@@ -943,9 +943,9 @@ function RiskTimelineChart({ history }: { history: GuardianHomeData["voicePsych"
 
 type TrendPoint = {
   date: string;
-  우울: number;
-  불안: number;
-  피로: number;
+  가라앉음: number;
+  긴장감: number;
+  피로단서: number;
   활력: number;
 };
 
@@ -953,13 +953,13 @@ function TrendSummary({ data }: { data: TrendPoint[] }) {
   const summary = useMemo(() => {
     if (data.length < 2) return null;
     const metrics: Array<{
-      key: "우울" | "불안" | "피로" | "활력";
+      key: "가라앉음" | "긴장감" | "피로단서" | "활력";
       // 활력은 높을수록 좋음, 나머지는 높을수록 나쁨
       higherIsBad: boolean;
     }> = [
-      { key: "우울", higherIsBad: true },
-      { key: "불안", higherIsBad: true },
-      { key: "피로", higherIsBad: true },
+      { key: "가라앉음", higherIsBad: true },
+      { key: "긴장감", higherIsBad: true },
+      { key: "피로단서", higherIsBad: true },
       { key: "활력", higherIsBad: false },
     ];
 
@@ -1015,26 +1015,26 @@ function TrendSummary({ data }: { data: TrendPoint[] }) {
             : tone === "bad"
               ? "활력이 점점 떨어지고 있어요. 컨디션 점검이 필요해요."
               : `평균 ${avg.toFixed(0)}점으로 안정적이에요.`;
-      } else if (m.key === "우울") {
+      } else if (m.key === "가라앉음") {
         interpretation =
           tone === "bad"
-            ? "우울 지표가 상승 추세예요. 따뜻한 안부 통화를 권장해요."
+            ? "가라앉은 톤이 늘고 있어요. 따뜻한 안부 통화를 권장해요."
             : tone === "good"
-              ? "우울 지표가 완화되고 있어요. 좋은 흐름이에요."
+              ? "가라앉은 톤이 줄고 있어요. 좋은 흐름이에요."
               : `평균 ${avg.toFixed(0)}점으로 큰 변화는 없어요.`;
-      } else if (m.key === "불안") {
+      } else if (m.key === "긴장감") {
         interpretation =
           tone === "bad"
-            ? "불안 신호가 늘고 있어요. 최근 변화나 스트레스 요인을 확인해 주세요."
+            ? "긴장감 단서가 늘고 있어요. 최근 변화나 불편한 일을 확인해 주세요."
             : tone === "good"
-              ? "불안 수준이 낮아지는 추세예요."
+              ? "긴장감 단서가 낮아지는 추세예요."
               : `평균 ${avg.toFixed(0)}점, 변동 ${(max - min).toFixed(0)}점.`;
       } else {
         interpretation =
           tone === "bad"
-            ? "피로감이 누적되는 흐름이에요. 충분한 휴식을 권해 주세요."
+            ? "피로 단서가 누적되는 흐름이에요. 충분한 휴식을 권해 주세요."
             : tone === "good"
-              ? "피로도가 줄어들고 있어요."
+              ? "피로 단서가 줄어들고 있어요."
               : `평균 ${avg.toFixed(0)}점으로 일정해요.`;
       }
 
@@ -1049,11 +1049,11 @@ function TrendSummary({ data }: { data: TrendPoint[] }) {
     const bad = summary.filter((s) => s.tone === "bad");
     const good = summary.filter((s) => s.tone === "good");
     if (bad.length >= 2)
-      return `최근 ${bad.map((b) => b.key).join("·")} 지표가 함께 악화되고 있어요. 보호자 개입을 권장해요.`;
+      return `최근 ${bad.map((b) => b.key).join("·")} 참고 지표가 함께 높아졌어요. 보호자 확인을 권장해요.`;
     if (bad.length === 1)
-      return `${bad[0].key} 지표만 악화 중이에요. 해당 영역을 우선 살펴봐 주세요.`;
-    if (good.length >= 2) return "전반적으로 회복 흐름이에요. 현재 케어 방식을 유지하세요.";
-    if (good.length === 1) return `${good[0].key} 지표가 개선되고 있어요.`;
+      return `${bad[0].key} 참고 지표가 높아지는 중이에요. 해당 영역을 우선 살펴봐 주세요.`;
+    if (good.length >= 2) return "전반적으로 안정적인 흐름이에요. 현재 안부 확인 방식을 유지하세요.";
+    if (good.length === 1) return `${good[0].key} 참고 지표가 안정되는 흐름이에요.`;
     return "지난 7일 동안 큰 변동 없이 안정적이에요.";
   }, [summary]);
 

@@ -504,6 +504,24 @@ export const REC_PRIORITY_LABEL: Record<RecPriority, string> = {
   keep: "평소처럼",
 };
 
+const PRIORITY_RANK: Record<RecPriority, number> = {
+  now: 0,
+  soon: 1,
+  keep: 2,
+};
+
+/** urgent/caution일 때 '지금 바로' 권고를 앞에 두기 */
+export function sortRecommendationsByCondition(
+  items: EmotionRecommendation[],
+  condition?: ConditionLevel | string | null,
+): EmotionRecommendation[] {
+  const c = (condition ?? "normal") as ConditionLevel;
+  if (c !== "urgent" && c !== "caution") return items;
+  return [...items].sort(
+    (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority],
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 // 알림 레벨 — 보고서 §6 「알림·보호자 통보 정책」 기반
 //   low  = 평소 안부 (하루 1회 확인)

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 
 import { Mic, MicOff, PhoneOff, Phone, Sparkles, Loader2, Moon, AlertTriangle, CheckCircle2, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
+import { EmotionRecommendationCollection } from "@/components/checkin/CheckinOverview";
 import { cn } from "@/lib/utils";
 import { createRealtimeSession } from "@/lib/voice-test-actions";
 import {
@@ -23,7 +24,7 @@ import {
 } from "@/lib/checkin/background-save";
 import { trackEvent } from "@/lib/analytics/trackEvent";
 import { ANALYTICS_EVENTS } from "@/lib/analytics/eventNames";
-import { resolveEmotion } from "@/lib/checkin/emotion";
+import { ALERT_LEVEL_LABEL, resolveAlert, resolveEmotion } from "@/lib/checkin/emotion";
 import {
   buildCheckinStepAnswers,
   buildCheckinQuestionPlan,
@@ -45,6 +46,17 @@ import {
 type Transcript = { role: "user" | "ai"; text: string; ts: number; partial?: boolean };
 type Status = "idle" | "connecting" | "live" | "ended" | "analyzing";
 type TurnState = "idle" | "ai_speaking" | "user_can_speak";
+type SavedCheckinTurn = {
+  id: string;
+  turn_index?: number | null;
+  step_id?: string | null;
+  step_label?: string | null;
+  ai_question?: string | null;
+  user_answer?: string | null;
+  corrected_answer?: string | null;
+  corrected_at?: string | null;
+  risk_matches?: unknown;
+};
 
 type AnalyzeResult = Awaited<ReturnType<typeof analyzeAndSaveCheckin>>;
 type OpeningMemory = Awaited<ReturnType<typeof getCheckinOpeningMemory>>;
@@ -85,12 +97,14 @@ export function DailyVoiceCheckin({
   alreadyDoneToday = false,
   todayCondition = null,
   todayMood = null,
+  savedTurns = [],
 }: {
   nickname?: string;
   onAnalyzed?: (result: AnalyzeResult) => void;
   alreadyDoneToday?: boolean;
   todayCondition?: "good" | "normal" | "caution" | "urgent" | null;
   todayMood?: string | null;
+  savedTurns?: SavedCheckinTurn[];
 }) {
   const [status, setStatus] = useState<Status>("idle");
   const [muted, setMuted] = useState(false);
@@ -1177,6 +1191,29 @@ export function DailyVoiceCheckin({
     const condition = result?.checkin?.condition_level ?? todayCondition ?? "normal";
     const moodRaw = (result?.checkin as any)?.mood_status ?? todayMood ?? null;
     const emotion = resolveEmotion(condition, moodRaw);
+    const emotionAlert = resolveAlert(emotion.key, condition);
+    const savedStepAnswers: CheckinStepAnswer[] = savedTurns
+      .filter((turn) => (turn.user_answer ?? turn.corrected_answer ?? "").trim().length > 0)
+      .map((turn, index) => ({
+        stepId: (turn.step_id ?? "Q1_MEAL") as CheckinStepId,
+        stepLabel: turn.step_label ?? stepLabel((turn.step_id ?? "Q1_MEAL") as CheckinStepId),
+        question: turn.ai_question ?? "",
+        answer: (turn.corrected_answer || turn.user_answer || "").trim(),
+        answeredAt: index + 1,
+        riskMatches: Array.isArray(turn.risk_matches) ? (turn.risk_matches as CheckinStepAnswer["riskMatches"]) : [],
+      }));
+    const savedTranscripts: Transcript[] = savedTurns.flatMap((turn, index) => {
+      const ts = index * 2;
+      const question = (turn.ai_question ?? "").trim();
+      const answer = (turn.corrected_answer || turn.user_answer || "").trim();
+      return [
+        ...(question ? [{ role: "ai" as const, text: question, ts }] : []),
+        ...(answer ? [{ role: "user" as const, text: answer, ts: ts + 1 }] : []),
+      ];
+    });
+    const reviewAnswers = stepAnswers.length > 0 ? stepAnswers : savedStepAnswers;
+    const reviewTranscripts = transcripts.filter((t) => t.text.trim().length > 0 && !t.partial);
+    const fullConversation = reviewTranscripts.length > 0 ? reviewTranscripts : savedTranscripts;
 
     // 각성도(arousal 0~1) → 회전·궤도·호흡 속도 동적 조절
     // 높을수록(분노/긴장/기쁨) 빠르고 강렬, 낮을수록(평온/지침) 느리고 잔잔
@@ -1295,12 +1332,55 @@ export function DailyVoiceCheckin({
           </div>
 
           <CheckinStepReview
-            answers={stepAnswers}
+            answers={reviewAnswers}
             showConversation={showConversationReview}
             onToggleConversation={() => setShowConversationReview((v) => !v)}
-            transcripts={transcripts.filter((t) => t.text.trim().length > 0 && !t.partial)}
+            transcripts={fullConversation}
             saving={reviewSaving}
             onSave={saveReviewCorrections}
+          />
+
+          {emotionAlert.level !== "low" && (
+            <div
+              className={cn(
+                "w-full rounded-2xl border px-4 py-4 text-left",
+                emotionAlert.level === "high"
+                  ? "border-primary/40 bg-primary/5"
+                  : "border-amber-warm/40 bg-amber-warm/10",
+              )}
+              role="status"
+            >
+              <p
+                className={cn(
+                  "text-xs font-bold uppercase tracking-wider",
+                  emotionAlert.level === "high" ? "text-primary" : "text-amber-warm",
+                )}
+              >
+                {ALERT_LEVEL_LABEL[emotionAlert.level]}
+              </p>
+              <p className="mt-2 text-sm leading-relaxed text-foreground/85">{emotionAlert.message}</p>
+              {emotionAlert.hotline && emotionAlert.hotline.length > 0 && (
+                <ul className="mt-3 flex flex-col gap-2">
+                  {emotionAlert.hotline.map((line) => (
+                    <li key={line.tel}>
+                      <a
+                        href={`tel:${line.tel}`}
+                        className="inline-flex items-center gap-1 text-sm font-semibold text-primary underline-offset-2 hover:underline"
+                      >
+                        {line.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          <EmotionRecommendationCollection
+            className="w-full"
+            condition={result?.checkin?.condition_level ?? todayCondition}
+            mood={result?.checkin?.mood_status ?? todayMood}
+            checkinId={result?.checkin?.id ?? null}
           />
 
           <NextCallNotice />
@@ -1632,11 +1712,16 @@ function CheckinStepReview({
   if (visibleAnswers.length === 0 && transcripts.length === 0) return null;
 
   return (
-    <section className="w-full rounded-[1.5rem] border border-border/70 bg-background/90 p-4 text-left shadow-soft">
-      <div className="flex items-start gap-3">
+    <section className="w-full rounded-[1.5rem] border border-border/70 bg-background/90 text-left shadow-soft">
+      <button
+        type="button"
+        onClick={onToggleConversation}
+        className="flex w-full items-center gap-3 p-4 text-left"
+        aria-expanded={showConversation}
+      >
         <span
           className={cn(
-            "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl",
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl",
             urgentCount > 0 ? "bg-destructive/10 text-destructive" : "bg-sage/15 text-sage",
           )}
         >
@@ -1644,14 +1729,15 @@ function CheckinStepReview({
         </span>
         <div className="min-w-0 flex-1">
           <p className="font-display text-lg font-bold text-foreground">오늘 이렇게 기록했어요</p>
-          <p className="mt-1 text-sm leading-relaxed text-foreground/60">
-            질문별 답변과 위험 근거를 함께 저장했어요. 보호자에게는 원문과 근거가 전달돼요.
+          <p className="mt-0.5 truncate text-sm text-foreground/60">
+            {visibleAnswers.length > 0 ? `답변 ${visibleAnswers.length}개 저장 · 눌러서 대화 보기` : "눌러서 오늘 대화 보기"}
           </p>
         </div>
-      </div>
+        <ChevronDown className={cn("h-5 w-5 shrink-0 text-foreground/45 transition-transform", showConversation && "rotate-180")} />
+      </button>
 
-      {urgentCount > 0 && (
-        <div className="mt-4 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3">
+      {showConversation && urgentCount > 0 && (
+        <div className="mx-4 mb-4 rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-3">
           <p className="text-sm font-bold text-destructive">긴급 확인 표현 {urgentCount}건</p>
           <p className="mt-1 text-sm leading-relaxed text-destructive/90">
             쇼크, 호흡 곤란, 의식 저하 같은 표현은 출처 기반 근거와 함께 보호자 확인 대상으로 기록돼요.
@@ -1659,8 +1745,8 @@ function CheckinStepReview({
         </div>
       )}
 
-      {displayAnswers.length > 0 && (
-        <ul className="mt-4 space-y-2.5">
+      {showConversation && displayAnswers.length > 0 && (
+        <ul className="space-y-2.5 px-4 pb-4">
           {displayAnswers.map((answer, index) => {
             const hasRisk = answer.riskMatches.length > 0;
             return (
@@ -1718,8 +1804,8 @@ function CheckinStepReview({
         </ul>
       )}
 
-      {visibleAnswers.length > 0 && (
-        <div className="mt-4 grid grid-cols-2 gap-2">
+      {showConversation && visibleAnswers.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 px-4 pb-4">
           {editing ? (
             <>
               <button
@@ -1763,19 +1849,10 @@ function CheckinStepReview({
         </div>
       )}
 
-      {transcripts.length > 0 && (
-        <div className="mt-4 border-t border-border/60 pt-3">
-          <button
-            type="button"
-            onClick={onToggleConversation}
-            className="flex w-full items-center justify-center gap-1.5 rounded-full bg-surface px-4 py-2.5 text-sm font-bold text-foreground/70"
-            aria-expanded={showConversation}
-          >
-            원문 대화 {showConversation ? "접기" : "보기"}
-            <ChevronDown className={cn("h-4 w-4 transition-transform", showConversation && "rotate-180")} />
-          </button>
-          {showConversation && (
-            <div className="mt-3 max-h-72 space-y-2 overflow-y-auto rounded-2xl bg-surface/70 p-3">
+      {showConversation && transcripts.length > 0 && (
+        <div className="border-t border-border/60 px-4 py-4">
+            <p className="mb-2 text-xs font-bold text-foreground/50">원문 대화</p>
+            <div className="max-h-72 space-y-2 overflow-y-auto rounded-2xl bg-surface/70 p-3">
               {transcripts.map((turn, index) => (
                 <div
                   key={`${turn.ts}-${index}`}
@@ -1793,7 +1870,6 @@ function CheckinStepReview({
                 </div>
               ))}
             </div>
-          )}
         </div>
       )}
     </section>

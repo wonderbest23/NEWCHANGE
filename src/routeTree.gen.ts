@@ -47,6 +47,7 @@ import { Route as AdminSiteConfigRouteImport } from './routes/admin.site-config'
 import { Route as AdminOrganizationPipelineRouteImport } from './routes/admin.organization-pipeline'
 import { Route as AdminInvestorKpiRouteImport } from './routes/admin.investor-kpi'
 import { Route as AdminIngestRouteImport } from './routes/admin.ingest'
+import { Route as AdminEmotionRecRouteImport } from './routes/admin.emotion-rec'
 import { Route as AdminAskLogsRouteImport } from './routes/admin.ask-logs'
 import { Route as AdminAlertsRouteImport } from './routes/admin.alerts'
 import { Route as AdminAgenciesRouteImport } from './routes/admin.agencies'
@@ -263,6 +264,11 @@ const AdminIngestRoute = AdminIngestRouteImport.update({
   path: '/ingest',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminEmotionRecRoute = AdminEmotionRecRouteImport.update({
+  id: '/emotion-rec',
+  path: '/emotion-rec',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminAskLogsRoute = AdminAskLogsRouteImport.update({
   id: '/ask-logs',
   path: '/ask-logs',
@@ -405,6 +411,7 @@ export interface FileRoutesByFullPath {
   '/admin/agencies': typeof AdminAgenciesRoute
   '/admin/alerts': typeof AdminAlertsRoute
   '/admin/ask-logs': typeof AdminAskLogsRoute
+  '/admin/emotion-rec': typeof AdminEmotionRecRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
   '/admin/organization-pipeline': typeof AdminOrganizationPipelineRoute
@@ -467,6 +474,7 @@ export interface FileRoutesByTo {
   '/admin/agencies': typeof AdminAgenciesRoute
   '/admin/alerts': typeof AdminAlertsRoute
   '/admin/ask-logs': typeof AdminAskLogsRoute
+  '/admin/emotion-rec': typeof AdminEmotionRecRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
   '/admin/organization-pipeline': typeof AdminOrganizationPipelineRoute
@@ -532,6 +540,7 @@ export interface FileRoutesById {
   '/admin/agencies': typeof AdminAgenciesRoute
   '/admin/alerts': typeof AdminAlertsRoute
   '/admin/ask-logs': typeof AdminAskLogsRoute
+  '/admin/emotion-rec': typeof AdminEmotionRecRoute
   '/admin/ingest': typeof AdminIngestRoute
   '/admin/investor-kpi': typeof AdminInvestorKpiRoute
   '/admin/organization-pipeline': typeof AdminOrganizationPipelineRoute
@@ -598,6 +607,7 @@ export interface FileRouteTypes {
     | '/admin/agencies'
     | '/admin/alerts'
     | '/admin/ask-logs'
+    | '/admin/emotion-rec'
     | '/admin/ingest'
     | '/admin/investor-kpi'
     | '/admin/organization-pipeline'
@@ -660,6 +670,7 @@ export interface FileRouteTypes {
     | '/admin/agencies'
     | '/admin/alerts'
     | '/admin/ask-logs'
+    | '/admin/emotion-rec'
     | '/admin/ingest'
     | '/admin/investor-kpi'
     | '/admin/organization-pipeline'
@@ -724,6 +735,7 @@ export interface FileRouteTypes {
     | '/admin/agencies'
     | '/admin/alerts'
     | '/admin/ask-logs'
+    | '/admin/emotion-rec'
     | '/admin/ingest'
     | '/admin/investor-kpi'
     | '/admin/organization-pipeline'
@@ -1090,6 +1102,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIngestRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/emotion-rec': {
+      id: '/admin/emotion-rec'
+      path: '/emotion-rec'
+      fullPath: '/admin/emotion-rec'
+      preLoaderRoute: typeof AdminEmotionRecRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/ask-logs': {
       id: '/admin/ask-logs'
       path: '/ask-logs'
@@ -1277,6 +1296,7 @@ interface AdminRouteChildren {
   AdminAgenciesRoute: typeof AdminAgenciesRoute
   AdminAlertsRoute: typeof AdminAlertsRoute
   AdminAskLogsRoute: typeof AdminAskLogsRoute
+  AdminEmotionRecRoute: typeof AdminEmotionRecRoute
   AdminIngestRoute: typeof AdminIngestRoute
   AdminInvestorKpiRoute: typeof AdminInvestorKpiRoute
   AdminOrganizationPipelineRoute: typeof AdminOrganizationPipelineRoute
@@ -1290,6 +1310,7 @@ const AdminRouteChildren: AdminRouteChildren = {
   AdminAgenciesRoute: AdminAgenciesRoute,
   AdminAlertsRoute: AdminAlertsRoute,
   AdminAskLogsRoute: AdminAskLogsRoute,
+  AdminEmotionRecRoute: AdminEmotionRecRoute,
   AdminIngestRoute: AdminIngestRoute,
   AdminInvestorKpiRoute: AdminInvestorKpiRoute,
   AdminOrganizationPipelineRoute: AdminOrganizationPipelineRoute,

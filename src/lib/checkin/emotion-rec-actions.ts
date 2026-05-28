@@ -16,15 +16,30 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
   getDailyMixedRecommendations,
+  sortRecommendationsByCondition,
   type EmotionKey,
   type EmotionRecommendation,
   type RecKind,
 } from "./emotion";
 
+const ConditionLevelSchema = z.enum(["good", "normal", "caution", "urgent"]);
+
 const InputSchema = z.object({
   emotionKey: z.enum(["joyful", "calm", "sad", "tired", "alert", "anxious"]),
+  conditionLevel: ConditionLevelSchema.optional(),
+  moodStatus: z.string().max(200).nullable().optional(),
+});
+
+const FeedbackInputSchema = z.object({
+  emotionKey: z.enum(["joyful", "calm", "sad", "tired", "alert", "anxious"]),
+  helpful: z.boolean(),
+  source: z.enum(["cache", "ai", "fallback"]).optional(),
+  cacheKey: z.string().max(80).optional(),
+  checkinId: z.string().uuid().nullable().optional(),
+  comment: z.string().max(500).nullable().optional(),
 });
 
 /** KST 기준 오늘 날짜 (YYYY-MM-DD) */
@@ -74,7 +89,18 @@ const ResponseSchema = z.object({
   items: z.array(RecSchema).min(3).max(6),
 });
 
-async function callOpenAI(emotionKey: EmotionKey, dateKey: string): Promise<EmotionRecommendation[] | null> {
+function finalizeItems(
+  items: EmotionRecommendation[],
+  conditionLevel?: z.infer<typeof ConditionLevelSchema>,
+): EmotionRecommendation[] {
+  return sortRecommendationsByCondition(items, conditionLevel ?? "normal");
+}
+
+async function callOpenAI(
+  emotionKey: EmotionKey,
+  dateKey: string,
+  ctx?: { conditionLevel?: z.infer<typeof ConditionLevelSchema>; moodStatus?: string | null },
+): Promise<EmotionRecommendation[] | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     console.warn("[emotion-rec] OPENAI_API_KEY missing — falling back to static");
@@ -88,7 +114,18 @@ async function callOpenAI(emotionKey: EmotionKey, dateKey: string): Promise<Emot
       { role: "system" as const, content: SYSTEM_PROMPT },
       {
         role: "user" as const,
-        content: `오늘 날짜는 ${dateKey} 입니다. 어르신의 오늘 감정 상태와 가이드:\n\n${EMOTION_GUIDE[emotionKey]}\n\n위 가이드에 맞춰 어르신께 드릴 4개의 다양한 종류 추천을 만들어 주세요. 종류는 모두 서로 달라야 하고, 출처(저자/장소/화자)는 정확해야 합니다.`,
+        content: [
+          `오늘 날짜는 ${dateKey} 입니다.`,
+          `어르신의 오늘 감정 상태와 가이드:\n\n${EMOTION_GUIDE[emotionKey]}`,
+          ctx?.conditionLevel ? `안부 체크 단계(condition_level): ${ctx.conditionLevel}` : null,
+          ctx?.moodStatus?.trim() ? `기분 서술(mood_status): ${ctx.moodStatus.trim()}` : null,
+          ctx?.conditionLevel === "urgent" || ctx?.conditionLevel === "caution"
+            ? "지금 바로 따라할 수 있는 짧고 부드러운 권고(now 우선)를 1개 이상 포함해 주세요."
+            : null,
+          "위 가이드에 맞춰 어르신께 드릴 4개의 다양한 종류 추천을 만들어 주세요. 종류는 모두 서로 달라야 하고, 출처(저자/장소/화자)는 정확해야 합니다.",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       },
     ],
     tools: [
@@ -186,8 +223,15 @@ async function callOpenAI(emotionKey: EmotionKey, dateKey: string): Promise<Emot
 }
 
 export const getDailyEmotionRecommendations = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => InputSchema.parse(d))
-  .handler(async ({ data }): Promise<{ items: EmotionRecommendation[]; source: "cache" | "ai" | "fallback" }> => {
+  .handler(async ({
+    data,
+  }): Promise<{
+    items: EmotionRecommendation[];
+    source: "cache" | "ai" | "fallback";
+    cacheKey: string;
+  }> => {
     const dateKey = kstDateKey();
     const cacheKey = `${dateKey}:${data.emotionKey}`;
 
@@ -201,30 +245,63 @@ export const getDailyEmotionRecommendations = createServerFn({ method: "POST" })
         .maybeSingle();
       const items = cached?.items;
       if (Array.isArray(items) && items.length > 0) {
-        return { items: items as EmotionRecommendation[], source: "cache" };
+        return {
+          items: finalizeItems(items as EmotionRecommendation[], data.conditionLevel),
+          source: "cache",
+          cacheKey,
+        };
       }
     } catch (e) {
       console.warn("[emotion-rec] cache lookup failed", e);
     }
 
     // 2) AI 호출
-    const aiItems = await callOpenAI(data.emotionKey as EmotionKey, dateKey);
+    const aiItems = await callOpenAI(data.emotionKey as EmotionKey, dateKey, {
+      conditionLevel: data.conditionLevel,
+      moodStatus: data.moodStatus,
+    });
     if (aiItems && aiItems.length > 0) {
+      const sorted = finalizeItems(aiItems, data.conditionLevel);
       // 3) 캐시 upsert — 타입 우회
       try {
         const sb = supabaseAdmin as any;
         await sb
           .from("emotion_rec_cache")
-          .upsert({ cache_key: cacheKey, items: aiItems }, { onConflict: "cache_key" });
+          .upsert({ cache_key: cacheKey, items: sorted }, { onConflict: "cache_key" });
       } catch (e) {
         console.warn("[emotion-rec] cache write failed", e);
       }
-      return { items: aiItems, source: "ai" };
+      return { items: sorted, source: "ai", cacheKey };
     }
 
     // 4) 최종 백업 — 정적 풀
     return {
-      items: getDailyMixedRecommendations(data.emotionKey as EmotionKey, 4),
+      items: finalizeItems(
+        getDailyMixedRecommendations(data.emotionKey as EmotionKey, 4),
+        data.conditionLevel,
+      ),
       source: "fallback",
+      cacheKey,
     };
+  });
+
+export const recordEmotionRecFeedback = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => FeedbackInputSchema.parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { error } = await (supabase as any).from("emotion_rec_feedback").insert({
+      user_id: userId,
+      checkin_id: data.checkinId ?? null,
+      emotion_key: data.emotionKey,
+      cache_key: data.cacheKey ?? null,
+      source: data.source ?? null,
+      helpful: data.helpful,
+      comment: data.comment?.trim() || null,
+    });
+    if (error) {
+      console.warn("[emotion-rec] feedback insert failed", error.message);
+      return { ok: false as const, error: error.message };
+    }
+    return { ok: true as const };
   });

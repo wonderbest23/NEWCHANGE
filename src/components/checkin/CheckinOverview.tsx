@@ -3,17 +3,16 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
-  BookOpen,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
-  Coffee,
   Dumbbell,
   HeartHandshake,
+  HeartPulse,
   Moon,
-  Music,
   Pill,
   ShieldCheck,
-  Sparkles,
+  Utensils,
   type LucideIcon,
 } from "lucide-react";
 
@@ -28,11 +27,17 @@ import { RecommendationCarousel } from "@/components/checkin/RecommendationCarou
 import { authHeaders } from "@/lib/auth/server-fn-headers";
 import { cn } from "@/lib/utils";
 import {
-  getEmotionRecommendationsByCadence,
+  getDailyMixedRecommendations,
   REC_PRIORITY_LABEL,
   resolveEmotion,
+  sortRecommendationsByCondition,
 } from "@/lib/checkin/emotion";
 import { getCheckinSummary } from "@/lib/checkin/checkin-actions";
+import {
+  getDailyEmotionRecommendations,
+  recordEmotionRecFeedback,
+} from "@/lib/checkin/emotion-rec-actions";
+import { toast } from "sonner";
 
 export type AxisStatus = "good" | "watch" | "unknown";
 type DayLevel = "good" | "normal" | "caution" | "urgent" | "none";
@@ -75,12 +80,30 @@ const STATUS_DOT: Record<AxisStatus, string> = {
   unknown: "bg-muted-foreground/30",
 };
 
+const LEVEL_LABEL: Record<DayLevel, string> = {
+  good: "양호",
+  normal: "보통",
+  caution: "주의",
+  urgent: "주의 필요",
+  none: "기록 없음",
+};
+
+const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"] as const;
+
 const LEVEL_DOT: Record<DayLevel, string> = {
   good: "bg-sage",
   normal: "bg-amber-warm/70",
   caution: "bg-amber-warm",
   urgent: "bg-primary",
   none: "bg-muted",
+};
+
+const LEVEL_BG: Record<DayLevel, string> = {
+  good: "bg-sage/15 text-sage border-sage/30",
+  normal: "bg-amber-warm/10 text-amber-warm border-amber-warm/30",
+  caution: "bg-amber-warm/20 text-amber-warm border-amber-warm/40",
+  urgent: "bg-primary/10 text-primary border-primary/30",
+  none: "bg-muted/30 text-foreground/40 border-border/40",
 };
 
 type RecItem = {
@@ -91,6 +114,200 @@ type RecItem = {
   author?: string;
   kind?: "action" | "book" | "quote" | "meditation" | "place" | "music" | "content";
 };
+
+function emotionRecKstDateKey() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
+}
+
+export function EmotionRecommendationCollection({
+  condition,
+  mood,
+  checkinId,
+  className,
+  title = "감정 기반 권고 모음",
+  caption,
+  limit = 4,
+}: {
+  condition?: string | null;
+  mood?: string | null;
+  checkinId?: string | null;
+  className?: string;
+  title?: string;
+  caption?: string;
+  limit?: number;
+}) {
+  const emotion = resolveEmotion((condition ?? null) as any, mood ?? null);
+  const dateKey = emotionRecKstDateKey();
+  const conditionLevel = (condition ?? undefined) as
+    | "good"
+    | "normal"
+    | "caution"
+    | "urgent"
+    | undefined;
+
+  const [feedbackSent, setFeedbackSent] = useState<"helpful" | "not_helpful" | null>(null);
+  const [feedbackPending, setFeedbackPending] = useState(false);
+  const [showCommentForm, setShowCommentForm] = useState(false);
+  const [feedbackComment, setFeedbackComment] = useState("");
+
+  const fallbackItems = useMemo(
+    () =>
+      sortRecommendationsByCondition(
+        getDailyMixedRecommendations(emotion.key, limit),
+        condition,
+      ),
+    [emotion.key, limit, condition],
+  );
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["emotion-rec-daily", emotion.key, dateKey, conditionLevel, mood ?? ""],
+    queryFn: async () =>
+      getDailyEmotionRecommendations({
+        data: {
+          emotionKey: emotion.key,
+          conditionLevel,
+          moodStatus: mood ?? null,
+        },
+        headers: await authHeaders(),
+      } as Parameters<typeof getDailyEmotionRecommendations>[0]),
+    staleTime: 60 * 60 * 1000,
+    retry: 1,
+  });
+
+  const items = (
+    !isError && data?.items?.length ? data.items : fallbackItems
+  ).slice(0, limit);
+
+  const submitFeedback = async (helpful: boolean, comment?: string) => {
+    if (feedbackSent || feedbackPending) return;
+    setFeedbackPending(true);
+    try {
+      const res = await recordEmotionRecFeedback({
+        data: {
+          emotionKey: emotion.key,
+          helpful,
+          source: data?.source,
+          cacheKey: data?.cacheKey,
+          checkinId: checkinId ?? null,
+          comment: comment?.trim() || null,
+        },
+        headers: await authHeaders(),
+      } as Parameters<typeof recordEmotionRecFeedback>[0]);
+      if (res.ok) {
+        setFeedbackSent(helpful ? "helpful" : "not_helpful");
+        setShowCommentForm(false);
+        toast.success(helpful ? "소중한 의견 감사해요." : "의견을 남겨 주셔서 감사해요.");
+      }
+    } catch {
+      toast.error("의견 전달에 실패했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setFeedbackPending(false);
+    }
+  };
+
+  const toneByPriority: Record<string, string> = {
+    now: "border-primary/40 bg-primary/5 text-primary",
+    soon: "border-amber-warm/50 bg-amber-warm/10 text-amber-warm",
+    keep: "border-sage/40 bg-sage/10 text-sage",
+  };
+
+  if (!isLoading && items.length === 0) return null;
+
+  return (
+    <section className={cn("w-full rounded-2xl border border-border/70 bg-background p-5 text-left shadow-soft", className)}>
+      <div className="text-left">
+        <h3 className="text-left font-display text-base font-bold text-foreground">{title}</h3>
+        <p className="mt-1 text-left text-sm leading-relaxed text-foreground/65">
+          {caption ?? (
+            <>
+              오늘 분석된 <span className={cn("font-bold", emotion.textTone)}>{emotion.label}</span> 신호에 맞춰 카테고리별로 하나씩 골랐어요.
+            </>
+          )}
+        </p>
+      </div>
+
+      {isLoading ? (
+        <p className="mt-4 rounded-xl border border-dashed border-border/60 bg-surface/40 px-4 py-8 text-center text-sm text-foreground/55">
+          오늘 맞춤 권고를 준비하고 있어요…
+        </p>
+      ) : (
+        <EmotionRecommendationSlider
+          className="mt-4"
+          items={items}
+          toneByPriority={toneByPriority}
+          showCategoryTabs
+          showEvidence
+        />
+      )}
+
+      <p className="mt-4 text-center text-xs leading-relaxed text-foreground/50">
+        일반 생활 가이드입니다. 통증이나 불편이 계속되면 보호자나 의료 전문가와 상의해 주세요.
+      </p>
+
+      {!isLoading && items.length > 0 && (
+        <div className="mt-4 border-t border-border/50 pt-4">
+          <p className="text-center text-sm font-medium text-foreground/70">
+            이 권고가 도움이 되셨나요?
+          </p>
+          {feedbackSent ? (
+            <p className="mt-2 text-center text-xs text-foreground/50">의견을 남겨 주셔서 감사해요.</p>
+          ) : showCommentForm ? (
+            <div className="mt-3 space-y-3">
+              <label className="block text-xs font-medium text-foreground/60">
+                어떤 점이 아쉬웠는지 알려주세요 (선택)
+              </label>
+              <textarea
+                value={feedbackComment}
+                onChange={(e) => setFeedbackComment(e.target.value)}
+                rows={3}
+                maxLength={500}
+                placeholder="예: 내용이 너무 길어요, 다른 종류도 보고 싶어요"
+                className="w-full resize-none rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-foreground/40"
+              />
+              <div className="flex justify-center gap-2">
+                <button
+                  type="button"
+                  disabled={feedbackPending}
+                  onClick={() => submitFeedback(false, feedbackComment)}
+                  className="rounded-full border border-primary/40 bg-primary/10 px-5 py-2 text-sm font-semibold text-primary transition hover:bg-primary/15 disabled:opacity-50"
+                >
+                  보내기
+                </button>
+                <button
+                  type="button"
+                  disabled={feedbackPending}
+                  onClick={() => submitFeedback(false)}
+                  className="rounded-full border border-border/60 px-4 py-2 text-sm text-foreground/60 hover:bg-muted disabled:opacity-50"
+                >
+                  건너뛰기
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-3 flex justify-center gap-2">
+              <button
+                type="button"
+                disabled={feedbackPending}
+                onClick={() => submitFeedback(true)}
+                className="rounded-full border border-sage/40 bg-sage/10 px-5 py-2 text-sm font-semibold text-sage transition hover:bg-sage/20 disabled:opacity-50"
+              >
+                네, 도움 됐어요
+              </button>
+              <button
+                type="button"
+                disabled={feedbackPending}
+                onClick={() => setShowCommentForm(true)}
+                className="rounded-full border border-border/60 bg-surface/60 px-5 py-2 text-sm font-semibold text-foreground/70 transition hover:bg-muted disabled:opacity-50"
+              >
+                아니오
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 function classifyAxis(values: (string | null | undefined)[], watchTokens: string[]): AxisStatus {
   const vals = values.filter(Boolean) as string[];
@@ -179,32 +396,6 @@ export function CheckinOverview({
 
   const watchCount = axes.filter((a) => a.status === "watch").length;
 
-  const calendar = useMemo(() => {
-    const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" });
-    const map = new Map<string, DayLevel>();
-    for (const r of monthItems) {
-      if (!r.checkin_at) continue;
-      const d = fmt.format(new Date(r.checkin_at));
-      const order: DayLevel[] = ["good", "normal", "caution", "urgent"];
-      const prev = map.get(d) ?? "none";
-      const next = r.condition_level as DayLevel;
-      const winner = prev === "none" ? next : order.indexOf(next) > order.indexOf(prev) ? next : prev;
-      map.set(d, winner);
-    }
-    const days: { date: string; level: DayLevel; label: string }[] = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = fmt.format(d);
-      days.push({
-        date: key,
-        level: map.get(key) ?? "none",
-        label: `${d.getMonth() + 1}/${d.getDate()}`,
-      });
-    }
-    return days;
-  }, [monthItems]);
-
   const weekly = useMemo(() => {
     return {
       done: weekItems.length,
@@ -226,14 +417,7 @@ export function CheckinOverview({
     return out;
   }, [axes]);
 
-  const emotion = resolveEmotion((todayCheckin?.condition_level ?? null) as any, todayCheckin?.mood_status ?? null);
-  const recsByCadence = todayCheckin ? getEmotionRecommendationsByCadence(emotion.key) : null;
-  const weeklyEmotionRecs = recsByCadence?.weekly.slice(0, Math.max(4, maxRecs)) ?? [];
-  const toneByPriority: Record<string, string> = {
-    now: "border-primary/40 bg-primary/5 text-primary",
-    soon: "border-amber-warm/50 bg-amber-warm/10 text-amber-warm",
-    keep: "border-sage/40 bg-sage/10 text-sage",
-  };
+  const weekEmotionSource = todayCheckin ?? weekItems[weekItems.length - 1] ?? null;
 
   return (
     <section id="health-overview" className={cn(view === "all" && "mt-8 scroll-mt-24")}>
@@ -317,13 +501,15 @@ export function CheckinOverview({
             </div>
           )}
 
-          {/* 이번 주 감정 기반 권고 (논문 근거) */}
-          {view === "week" && weeklyEmotionRecs.length > 0 && (
-            <CadenceRecBlock
-              title="이번 주 감정 권고"
-              caption={`${emotion.label} 신호 기반`}
-              items={weeklyEmotionRecs}
-              toneByPriority={toneByPriority}
+          {/* 이번 주 탭 — 최근 안부·오늘 기록 기준 AI 맞춤 권고 */}
+          {view === "week" && weekEmotionSource && (
+            <EmotionRecommendationCollection
+              className="mt-8"
+              title="맞춤 감정 권고"
+              caption={`${resolveEmotion(weekEmotionSource.condition_level as any, weekEmotionSource.mood_status).label} 신호에 맞춰 골랐어요`}
+              condition={weekEmotionSource.condition_level}
+              mood={weekEmotionSource.mood_status}
+              checkinId={todayCheckin?.id ?? weekEmotionSource.id}
             />
           )}
         </section>
@@ -337,32 +523,20 @@ export function CheckinOverview({
                 <span>자세히 보기</span>
                 <ChevronDown className="h-6 w-6 text-foreground/50 transition-transform group-open:rotate-180" />
               </summary>
-              <DetailsBody axes={axes} calendar={calendar} />
+              <DetailsBody
+                axes={axes}
+                monthItems={monthItems}
+                emotionSource={weekEmotionSource}
+                checkinId={todayCheckin?.id ?? weekEmotionSource?.id}
+              />
             </details>
           ) : (
-            <>
-              <DetailsBody axes={axes} calendar={calendar} />
-
-              {/* 자세히 탭 — 이번 주 감정 권고만 노출 */}
-              {weeklyEmotionRecs.length > 0 && (
-                <div className="mt-10">
-                  <h3 className="font-display text-fluid-2xl text-foreground">
-                    감정 기반 권고 모음
-                  </h3>
-                  <p className="mt-2 text-fluid-base text-foreground/65">
-                    오늘 분석된 <span className={cn("font-semibold", emotion.textTone)}>{emotion.label}</span> 신호를 바탕으로, 이번 주에 해볼 만한 것만 모았어요.
-                  </p>
-                  <CadenceRecBlock
-                    title="이번 주"
-                    items={weeklyEmotionRecs}
-                    toneByPriority={toneByPriority}
-                  />
-                  <p className="mt-4 text-fluid-sm text-foreground/55 text-xs text-center font-sans">
-                    ※ 일반 가이드입니다. 증상이 지속되면 의료 전문가와 상담해주세요.
-                  </p>
-                </div>
-              )}
-            </>
+            <DetailsBody
+              axes={axes}
+              monthItems={monthItems}
+              emotionSource={weekEmotionSource}
+              checkinId={todayCheckin?.id ?? weekEmotionSource?.id}
+            />
           )}
         </section>
       )}
@@ -373,46 +547,312 @@ export function CheckinOverview({
 
 function DetailsBody({
   axes,
-  calendar,
+  monthItems,
+  emotionSource,
+  checkinId,
 }: {
   axes: { key: string; label: string; status: AxisStatus }[];
-  calendar: { date: string; level: DayLevel; label: string }[];
+  monthItems: CheckinRow[];
+  emotionSource?: CheckinRow | null;
+  checkinId?: string | null;
 }) {
-  const todayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
-
   return (
     <>
       <div className="mt-8">
-        <h3 className="font-display text-fluid-2xl text-foreground">건강 지표 7가지</h3>
+        <h3 className="font-display text-fluid-2xl text-foreground">오늘 살펴볼 7가지</h3>
         <HealthAxisTicker axes={axes} />
       </div>
 
+      {emotionSource && (
+        <EmotionRecommendationCollection
+          className="mt-10"
+          title="맞춤 감정 권고"
+          caption={`${resolveEmotion(emotionSource.condition_level as any, emotionSource.mood_status).label} 신호에 맞춰 골랐어요`}
+          condition={emotionSource.condition_level}
+          mood={emotionSource.mood_status}
+          checkinId={checkinId}
+        />
+      )}
+
       <div className="mt-10">
         <h3 className="font-display text-fluid-2xl text-foreground">최근 30일</h3>
-        <div className="mt-5 grid grid-cols-10 gap-2">
-          {calendar.map((d) => {
-            const isToday = d.date === todayKey;
-            return (
-              <div key={d.date} className="flex flex-col items-center gap-1.5">
-                <span
-                  className={cn(
-                    "h-4 w-4 rounded-full",
-                    LEVEL_DOT[d.level],
-                    isToday && "h-5 w-5 animate-today-ring ring-2 ring-sky-500 ring-offset-2 ring-offset-background",
-                  )}
-                  title={`${d.label} · ${isToday ? "오늘 · " : ""}${d.level}`}
-                  aria-label={`${d.label} ${isToday ? "오늘" : ""}`}
-                />
-                <span className={cn("text-[11px] tabular-nums text-foreground/55", isToday && "font-bold text-sky-600")}>
-                  {d.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        <MonthlyCheckinCalendar items={monthItems} />
       </div>
     </>
   );
+}
+
+const KST_DATE_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" });
+
+function getKstDateKey(year: number, month: number, day: number) {
+  return KST_DATE_FMT.format(
+    new Date(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T12:00:00+09:00`),
+  );
+}
+
+function getKstWeekday(year: number, month: number, day: number) {
+  const dt = new Date(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T12:00:00+09:00`);
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul", weekday: "short" }).format(dt);
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[name] ?? 0;
+}
+
+function countDaysInKstMonth(year: number, month: number) {
+  for (let d = 31; d >= 28; d--) {
+    const key = getKstDateKey(year, month, d);
+    const [, m, day] = key.split("-").map(Number);
+    if (m === month && day === d) return d;
+  }
+  return 30;
+}
+
+function dayLevelFromRecord(record?: CheckinRow | null): DayLevel {
+  if (!record?.condition_level) return "none";
+  return record.condition_level as DayLevel;
+}
+
+type CalendarCell =
+  | { type: "empty" }
+  | {
+      type: "day";
+      date: string;
+      day: number;
+      level: DayLevel;
+      inWindow: boolean;
+      isToday: boolean;
+      record: CheckinRow | null;
+    };
+
+function MonthlyCheckinCalendar({ items }: { items: CheckinRow[] }) {
+  const todayKey = KST_DATE_FMT.format(new Date());
+  const [ty, tm] = todayKey.split("-").map(Number);
+
+  const windowStart = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 29);
+    return KST_DATE_FMT.format(d);
+  }, []);
+
+  const recordByDay = useMemo(() => {
+    const map = new Map<string, CheckinRow>();
+    for (const r of items) {
+      if (!r.checkin_at) continue;
+      const key = KST_DATE_FMT.format(new Date(r.checkin_at));
+      const prev = map.get(key);
+      if (!prev || new Date(r.checkin_at) > new Date(prev.checkin_at!)) {
+        map.set(key, r);
+      }
+    }
+    return map;
+  }, [items]);
+
+  const [viewYear, setViewYear] = useState(ty);
+  const [viewMonth, setViewMonth] = useState(tm);
+  const [selected, setSelected] = useState<string | null>(todayKey);
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    setRevealed(false);
+    const t = window.setTimeout(() => setRevealed(true), 650);
+    return () => window.clearTimeout(t);
+  }, [viewYear, viewMonth]);
+
+  const monthLabel = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "long",
+  }).format(new Date(`${viewYear}-${String(viewMonth).padStart(2, "0")}-01T12:00:00+09:00`));
+
+  const cells = useMemo(() => {
+    const daysInMonth = countDaysInKstMonth(viewYear, viewMonth);
+    const firstDow = getKstWeekday(viewYear, viewMonth, 1);
+    const out: CalendarCell[] = [];
+    for (let i = 0; i < firstDow; i++) out.push({ type: "empty" });
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = getKstDateKey(viewYear, viewMonth, d);
+      const record = recordByDay.get(date) ?? null;
+      out.push({
+        type: "day",
+        date,
+        day: d,
+        level: dayLevelFromRecord(record),
+        inWindow: date >= windowStart && date <= todayKey,
+        isToday: date === todayKey,
+        record,
+      });
+    }
+    return out;
+  }, [viewYear, viewMonth, recordByDay, windowStart, todayKey]);
+
+  const canPrev =
+    viewYear > Number(windowStart.slice(0, 4)) ||
+    (viewYear === Number(windowStart.slice(0, 4)) && viewMonth > Number(windowStart.slice(5, 7)));
+  const canNext = viewYear < ty || (viewYear === ty && viewMonth < tm);
+
+  const goPrev = () => {
+    if (viewMonth === 1) {
+      setViewYear((y) => y - 1);
+      setViewMonth(12);
+    } else {
+      setViewMonth((m) => m - 1);
+    }
+  };
+
+  const goNext = () => {
+    if (viewMonth === 12) {
+      setViewYear((y) => y + 1);
+      setViewMonth(1);
+    } else {
+      setViewMonth((m) => m + 1);
+    }
+  };
+
+  const selectedRecord = selected ? recordByDay.get(selected) ?? null : null;
+  const selectedLevel = dayLevelFromRecord(selectedRecord);
+  const selectedLabel = selected
+    ? new Intl.DateTimeFormat("ko-KR", {
+        timeZone: "Asia/Seoul",
+        month: "long",
+        day: "numeric",
+        weekday: "short",
+      }).format(new Date(`${selected}T12:00:00+09:00`))
+    : "";
+
+  return (
+    <div className="mt-5 overflow-hidden rounded-2xl border border-border/70 bg-background shadow-soft">
+      {/* 월 헤더 — 슬라이드 인 */}
+      <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+        <button
+          type="button"
+          onClick={goPrev}
+          disabled={!canPrev}
+          aria-label="이전 달"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-border/60 text-foreground/60 transition hover:bg-muted disabled:opacity-30"
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </button>
+        <p
+          key={`${viewYear}-${viewMonth}`}
+          className="animate-calendar-month-in font-display text-xl font-bold text-foreground"
+        >
+          {monthLabel}
+        </p>
+        <button
+          type="button"
+          onClick={goNext}
+          disabled={!canNext}
+          aria-label="다음 달"
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-border/60 text-foreground/60 transition hover:bg-muted disabled:opacity-30"
+        >
+          <ChevronRight className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* 달력 그리드 */}
+      {revealed && (
+        <div key={`grid-${viewYear}-${viewMonth}`} className="animate-calendar-grid-in px-3 pb-4 pt-3">
+          <div className="grid grid-cols-7 gap-1">
+            {WEEKDAYS.map((w) => (
+              <div key={w} className="py-1 text-center text-xs font-semibold text-foreground/45">
+                {w}
+              </div>
+            ))}
+            {cells.map((cell, i) => {
+              if (cell.type === "empty") {
+                return <div key={`empty-${i}`} className="aspect-square" />;
+              }
+              const isSelected = selected === cell.date;
+              const clickable = cell.inWindow;
+              return (
+                <button
+                  key={cell.date}
+                  type="button"
+                  disabled={!clickable}
+                  onClick={() => setSelected(cell.date)}
+                  aria-label={`${cell.day}일 ${LEVEL_LABEL[cell.level]}`}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    "relative flex aspect-square flex-col items-center justify-center rounded-xl border text-sm font-semibold transition-all duration-200",
+                    clickable ? LEVEL_BG[cell.level] : "border-transparent bg-transparent text-foreground/20",
+                    isSelected && clickable && "ring-2 ring-primary ring-offset-2 ring-offset-background scale-[1.03]",
+                    cell.isToday && !isSelected && clickable && "ring-1 ring-sky-400/60",
+                  )}
+                >
+                  <span>{cell.day}</span>
+                  {cell.level !== "none" && clickable && (
+                    <span className={cn("mt-0.5 h-1.5 w-1.5 rounded-full", LEVEL_DOT[cell.level])} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 선택한 날 요약 */}
+      {selected && revealed && (
+        <div className="border-t border-border/60 bg-surface/40 px-4 py-4 animate-rise-in">
+          <p className="text-xs font-semibold uppercase tracking-wider text-foreground/50">선택한 날</p>
+          <p className="mt-1 text-lg font-bold text-foreground">{selectedLabel}</p>
+          {selectedRecord ? (
+            <div className="mt-3 space-y-2.5 rounded-xl border border-border/60 bg-background p-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-foreground/60">상태</span>
+                <span className={cn("rounded-full border px-2.5 py-0.5 text-xs font-bold", LEVEL_BG[selectedLevel])}>
+                  {LEVEL_LABEL[selectedLevel]}
+                </span>
+              </div>
+              {selectedRecord.mood_status && (
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-foreground/60">기분</span>
+                  <span className="font-semibold text-foreground">{selectedRecord.mood_status}</span>
+                </div>
+              )}
+              {selectedRecord.meal_status && (
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-foreground/60">식사</span>
+                  <span className="font-semibold text-foreground">{selectedRecord.meal_status}</span>
+                </div>
+              )}
+              {selectedRecord.sleep_status && (
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-foreground/60">수면</span>
+                  <span className="font-semibold text-foreground">{selectedRecord.sleep_status}</span>
+                </div>
+              )}
+              {selectedRecord.medicine_status && (
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-foreground/60">약 복용</span>
+                  <span className="font-semibold text-foreground">{selectedRecord.medicine_status}</span>
+                </div>
+              )}
+              {selectedRecord.summary && (
+                <p className="border-t border-border/50 pt-3 text-sm leading-relaxed text-foreground/75">
+                  {selectedRecord.summary}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="mt-3 rounded-xl border border-dashed border-border/60 bg-background px-4 py-6 text-center text-sm text-foreground/55">
+              이 날은 안부 기록이 없어요.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function healthAxisIcon(key: string): LucideIcon {
+  return {
+    body: HeartPulse,
+    meal: Utensils,
+    med: Pill,
+    sleep: Moon,
+    activity: Dumbbell,
+    fall: ShieldCheck,
+    social: HeartHandshake,
+  }[key] ?? Activity;
 }
 
 function HealthAxisTicker({
@@ -433,6 +873,8 @@ function HealthAxisTicker({
 
   if (!current) return null;
 
+  const CurrentIcon = healthAxisIcon(current.key);
+
   return (
     <div className="mt-5 overflow-hidden rounded-2xl border border-border/70 bg-background p-5 shadow-soft">
       <div
@@ -440,85 +882,67 @@ function HealthAxisTicker({
         className="animate-axis-slide"
         aria-live="polite"
       >
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-foreground/50">
+        <div className="flex items-center gap-3">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <CurrentIcon className="h-6 w-6" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold tabular-nums text-foreground/50">
               {active + 1} / {axes.length}
             </p>
-            <p className="mt-1 text-3xl font-bold leading-tight text-foreground sm:text-4xl">
+            <p className="mt-0.5 text-2xl font-bold leading-tight text-foreground sm:text-3xl">
               {current.label}
             </p>
           </div>
-          <span className={cn("h-5 w-5 shrink-0 rounded-full", STATUS_DOT[current.status])} />
+          <span className={cn("h-4 w-4 shrink-0 rounded-full", STATUS_DOT[current.status])} />
         </div>
-        <div className="mt-5 flex items-center justify-between rounded-xl bg-surface px-4 py-3">
-          <span className="text-base font-medium text-foreground/60">상태</span>
-          <span className="text-2xl font-bold text-foreground">
+        <div className="mt-4 flex items-center justify-between rounded-xl bg-surface px-4 py-3">
+          <span className="text-sm font-medium text-foreground/60">상태</span>
+          <span className="text-xl font-bold text-foreground">
             {STATUS_LABEL[current.status]}
           </span>
         </div>
       </div>
 
-      <div className="mt-5 flex justify-center gap-2">
-        {axes.map((a, i) => (
-          <button
-            key={a.key}
-            type="button"
-            onClick={() => setActive(i)}
-            aria-label={`${a.label} 보기`}
-            className="flex h-8 w-8 items-center justify-center"
-          >
-            <span
+      {/* 지표별 아이콘 탭 */}
+      <div
+        className="mt-4 flex justify-between gap-1 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        role="tablist"
+        aria-label="오늘 살펴볼 항목"
+      >
+        {axes.map((a, i) => {
+          const Icon = healthAxisIcon(a.key);
+          const isActive = i === active;
+          return (
+            <button
+              key={a.key}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              aria-label={`${a.label} 보기`}
+              onClick={() => setActive(i)}
               className={cn(
-                "rounded-full transition-all duration-300",
-                i === active ? "h-2.5 w-7 bg-primary" : "h-2.5 w-2.5 bg-foreground/25",
+                "flex shrink-0 flex-col items-center gap-1 rounded-xl px-2 py-2 transition-all duration-200",
+                isActive ? "bg-primary/10 text-primary" : "text-foreground/45 hover:text-foreground/70",
               )}
-            />
-          </button>
-        ))}
+            >
+              <span
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
+                  isActive ? "bg-primary text-primary-foreground" : "bg-surface",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className={cn("max-w-[3rem] truncate text-[10px] font-semibold leading-none", isActive && "text-primary")}>
+                {a.label}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
-}
-
-function CadenceRecBlock({
-  title,
-  caption,
-  items,
-  toneByPriority,
-}: {
-  title: string;
-  caption?: string;
-  items: RecItem[];
-  toneByPriority: Record<string, string>;
-}) {
-  if (items.length === 0) return null;
-  return (
-    <div className="mt-8">
-      <div className="flex items-baseline justify-between gap-3">
-        <h4 className="font-display text-fluid-xl text-foreground">{title}</h4>
-        {caption && <span className="text-fluid-sm text-foreground/55">{caption}</span>}
-      </div>
-      <EmotionRecommendationSlider
-        className="mt-4"
-        items={items}
-        toneByPriority={toneByPriority}
-        showEvidence
-      />
-    </div>
-  );
-}
-
-function recommendationIcon(text: string, index: number): LucideIcon {
-  if (/수면|잠|밤|휴대폰|카페인/.test(text)) return Moon;
-  if (/약|복용|의료|병원|상담/.test(text)) return Pill;
-  if (/운동|산책|움직|활동|스트레칭/.test(text)) return Dumbbell;
-  if (/물|식사|밥|차|카페인/.test(text)) return Coffee;
-  if (/음악|노래/.test(text)) return Music;
-  if (/책|읽|명언/.test(text)) return BookOpen;
-  if (/가족|친구|대화|인사|이야기/.test(text)) return HeartHandshake;
-  if (/무리|낙상|어지러/.test(text)) return ShieldCheck;
-  return [Sparkles, Activity, HeartHandshake][index % 3];
 }
 
 function recommendationKindLabel(kind: RecItem["kind"]) {
@@ -552,20 +976,40 @@ function recommendationSourceLabel(item: RecItem) {
   return null;
 }
 
+function recommendationWhyLabel(item: RecItem) {
+  if (item.hint) return item.hint;
+  if (item.kind === "book") return "이번 감정 흐름을 천천히 정리하는 데 도움이 되는 읽을거리예요.";
+  if (item.kind === "quote") return "짧게 읽고 마음을 환기하기 좋은 문장이에요.";
+  if (item.kind === "meditation") return "호흡과 몸의 긴장을 낮추는 데 초점을 둔 방법이에요.";
+  if (item.kind === "place") return "가볍게 움직이며 기분을 바꾸기 좋은 장소예요.";
+  if (item.kind === "music") return "호흡을 고르게 하고 마음을 가라앉히기 좋은 음악이에요.";
+  if (item.kind === "content") return "오늘 상태와 연결해 부담 없이 참고할 수 있는 자료예요.";
+  return "오늘 상태에서 무리 없이 바로 시도할 수 있는 작은 행동이에요.";
+}
+
+function recommendationEvidenceLabel(item: RecItem) {
+  if (item.evidence) return item.evidence;
+  if (item.kind === "action" || item.kind === "meditation") {
+    return "비약물적 정서 안정 권고: 호흡, 휴식, 가벼운 활동, 사회적 연결 중심";
+  }
+  return null;
+}
+
 function EmotionRecommendationSlider({
   items,
   toneByPriority,
   className,
   showEvidence = false,
+  showCategoryTabs = false,
 }: {
   items: RecItem[];
   toneByPriority: Record<string, string>;
   className?: string;
   showEvidence?: boolean;
+  showCategoryTabs?: boolean;
 }) {
   const [api, setApi] = useState<CarouselApi>();
   const [active, setActive] = useState(0);
-  const [paused, setPaused] = useState(false);
 
   useEffect(() => {
     if (!api) return;
@@ -579,65 +1023,86 @@ function EmotionRecommendationSlider({
     };
   }, [api]);
 
-  useEffect(() => {
-    if (!api || paused || items.length < 2) return;
-    const id = window.setInterval(() => {
-      if (api.canScrollNext()) api.scrollNext();
-      else api.scrollTo(0);
-    }, 5200);
-    return () => window.clearInterval(id);
-  }, [api, items.length, paused]);
-
   if (items.length === 0) return null;
 
+  const activeItem = items[active];
+
   return (
-    <div
-      className={className}
-      onPointerDown={() => setPaused(true)}
-      onPointerUp={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
-      onBlur={() => setPaused(false)}
-    >
-      <Carousel setApi={setApi} opts={{ align: "start", loop: items.length > 1 }}>
-        <CarouselContent className="-ml-3">
-          {items.map((r, i) => {
-            const Icon = recommendationIcon(r.text, i);
-            const sourceLabel = recommendationSourceLabel(r);
+    <div className={className}>
+      {/* 카테고리 탭 */}
+      {showCategoryTabs && items.length > 1 && (
+        <div
+          className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          role="tablist"
+          aria-label="권고 카테고리"
+        >
+          {items.map((item, i) => {
+            const isActive = active === i;
             return (
-              <CarouselItem key={`${r.text}-${i}`} className="pl-3">
-                <article className="min-h-[286px] animate-rise-in rounded-2xl border border-border/70 bg-background p-5 shadow-soft">
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                      <Icon className="h-6 w-6" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <span
-                        className={cn(
-                          "inline-flex rounded-full border px-2.5 py-1 text-xs font-bold",
-                          toneByPriority[r.priority] ?? toneByPriority.keep,
-                        )}
-                      >
-                        {recommendationKindLabel(r.kind)} · {REC_PRIORITY_LABEL[r.priority]}
+              <button
+                key={`${item.kind}-${i}`}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => api?.scrollTo(i)}
+                className={cn(
+                  "shrink-0 rounded-full border px-3.5 py-2 text-sm font-semibold transition-all duration-200",
+                  isActive
+                    ? "border-primary/50 bg-primary text-primary-foreground shadow-sm"
+                    : "border-border/60 bg-surface/60 text-foreground/70 hover:border-border hover:text-foreground",
+                )}
+              >
+                {recommendationKindLabel(item.kind)}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 슬라이드 카드 */}
+      <Carousel
+        setApi={setApi}
+        opts={{ align: "start", loop: items.length > 1, duration: 30 }}
+        className="mt-3"
+      >
+        <CarouselContent className="-ml-0">
+          {items.map((item, i) => {
+            const sourceLabel = recommendationSourceLabel(item);
+            const evidenceLabel = recommendationEvidenceLabel(item);
+
+            return (
+              <CarouselItem key={`${item.kind ?? "action"}-${i}`} className="pl-0">
+                <article className="overflow-hidden rounded-2xl border border-border/70 bg-surface/40 px-4 py-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!showCategoryTabs && (
+                      <span className="inline-flex items-center rounded-full bg-surface px-2.5 py-0.5 text-xs font-bold text-foreground/70">
+                        {recommendationKindLabel(item.kind)}
                       </span>
-                      <p className="mt-3 text-lg font-bold leading-snug text-foreground">
-                        {r.text}
-                      </p>
-                    </div>
+                    )}
+                    <span
+                      className={cn(
+                        "inline-flex rounded-full border px-2.5 py-0.5 text-xs font-bold",
+                        toneByPriority[item.priority] ?? toneByPriority.keep,
+                      )}
+                    >
+                      {REC_PRIORITY_LABEL[item.priority]}
+                    </span>
                   </div>
+                  <p className="mt-3 text-lg font-bold leading-snug text-foreground">
+                    {item.text}
+                  </p>
+                  <p className="mt-3 text-sm leading-relaxed text-foreground/70">
+                    <span className="font-semibold text-foreground/85">왜 추천하나요? </span>
+                    {recommendationWhyLabel(item)}
+                  </p>
                   {sourceLabel && (
-                    <p className="mt-4 rounded-xl bg-surface px-3 py-2 text-sm font-semibold leading-relaxed text-foreground/70">
+                    <p className="mt-3 rounded-xl bg-background px-3 py-2.5 text-sm font-medium text-foreground/65">
                       {sourceLabel}
                     </p>
                   )}
-                  {r.hint && (
-                    <p className="mt-4 text-sm font-medium leading-relaxed text-muted-foreground">
-                      <span className="font-bold text-foreground/70">왜 추천하나요? </span>
-                      {r.hint}
-                    </p>
-                  )}
-                  {showEvidence && r.evidence && (
-                    <p className="mt-3 text-xs leading-relaxed text-foreground/45">
-                      근거: {r.evidence}
+                  {showEvidence && evidenceLabel && (
+                    <p className="mt-2 text-xs leading-relaxed text-foreground/45">
+                      근거: {evidenceLabel}
                     </p>
                   )}
                 </article>
@@ -645,27 +1110,42 @@ function EmotionRecommendationSlider({
             );
           })}
         </CarouselContent>
-
       </Carousel>
 
+      {/* 이전 / 다음 */}
       {items.length > 1 && (
-        <div className="mt-4 flex items-center justify-center gap-2">
-          {items.map((_, i) => (
-            <button
-              key={i}
-              type="button"
-              aria-label={`${i + 1}번째 권고 보기`}
-              onClick={() => api?.scrollTo(i)}
-              className="flex h-8 w-8 items-center justify-center"
-            >
-              <span
-                className={cn(
-                  "rounded-full transition-all duration-300",
-                  active === i ? "h-2.5 w-7 bg-primary" : "h-2.5 w-2.5 bg-foreground/25",
-                )}
-              />
-            </button>
-          ))}
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => api?.scrollPrev()}
+            disabled={active === 0 && !api?.canScrollPrev()}
+            aria-label="이전 권고"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground/60 transition hover:bg-muted active:scale-95 disabled:opacity-30"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+
+          <p className="text-sm font-medium tabular-nums text-foreground/60">
+            {showCategoryTabs ? (
+              <span>{active + 1} / {items.length}</span>
+            ) : (
+              <>
+                {recommendationKindLabel(activeItem?.kind)}
+                <span className="mx-1.5 text-foreground/35">·</span>
+                <span>{active + 1} / {items.length}</span>
+              </>
+            )}
+          </p>
+
+          <button
+            type="button"
+            onClick={() => api?.scrollNext()}
+            disabled={active === items.length - 1 && !api?.canScrollNext()}
+            aria-label="다음 권고"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-foreground/60 transition hover:bg-muted active:scale-95 disabled:opacity-30"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
         </div>
       )}
     </div>

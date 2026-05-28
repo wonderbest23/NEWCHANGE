@@ -343,6 +343,20 @@ export const analyzeAndSaveCheckin = createServerFn({ method: "POST" })
       .single();
     if (reportErr || !report) throw new Error(`리포트 저장 실패: ${reportErr?.message}`);
 
+    if (familyId) {
+      const { syncVoicePsychFromSeniorCheckin } = await import("./voice-psych-sync.server");
+      await syncVoicePsychFromSeniorCheckin({
+        familyId,
+        checkinId: checkin.id,
+        conditionLevel: analysis.condition_level,
+        moodStatus: analysis.mood_status,
+        summary: analysis.summary,
+        urgentDetected: analysis.urgent_detected,
+        lonelinessDetected: analysis.loneliness_detected,
+        dizzinessDetected: analysis.dizziness_detected,
+      }).catch((e) => console.warn("[voice-psych-sync]", e));
+    }
+
     if (urgentEvidence || analysis.condition_level === "urgent" || analysis.urgent_detected) {
       await createCheckinUrgentAlert({
         userId,

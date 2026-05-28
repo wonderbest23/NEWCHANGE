@@ -177,11 +177,11 @@ export function SeniorAppLayout({
 
           {/* 시니어용 큰 하단 탭바 */}
           <nav
-            className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-border bg-background/98 backdrop-blur-xl lg:absolute"
+            className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-border/80 bg-background/98 shadow-[0_-6px_20px_rgba(65,45,32,0.08)] backdrop-blur-xl lg:absolute lg:inset-x-0"
             style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
             aria-label="주요 메뉴"
           >
-            <ul className="mx-auto grid w-full max-w-full grid-cols-4 lg:max-w-none">
+            <ul className="mx-auto grid w-full max-w-full grid-cols-4 divide-x divide-border/70 lg:max-w-none">
               {tabs.map((t) => {
                 const active =
                   t.to === "/home"
@@ -189,29 +189,25 @@ export function SeniorAppLayout({
                     : pathname.startsWith(t.to);
                 const Icon = t.icon;
                 return (
-                  <li key={t.to}>
+                  <li key={t.to} className="min-w-0">
                     <Link
                       to={t.to as "/home"}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "relative flex min-h-[68px] flex-col items-center justify-center gap-1 px-1 pb-2 pt-2.5 transition-colors",
-                        active ? "text-primary" : "text-foreground/60",
+                        "relative flex min-h-[68px] flex-col items-center justify-center gap-1 border-t-2 border-transparent px-1 pb-2 pt-2.5 transition-colors",
+                        active
+                          ? "border-t-primary bg-primary/5 text-primary"
+                          : "text-foreground/55 hover:bg-surface/60 hover:text-foreground/75",
                       )}
                     >
-                      {active && (
-                        <span
-                          aria-hidden
-                          className="absolute inset-x-6 top-0 h-1 rounded-b-full bg-primary"
-                        />
-                      )}
                       <Icon
-                        className="h-6 w-6"
+                        className="h-6 w-6 shrink-0"
                         strokeWidth={active ? 2.4 : 1.9}
                         aria-hidden
                       />
                       <span
                         className={cn(
-                          "text-base leading-none",
+                          "truncate text-base leading-none",
                           active ? "font-bold" : "font-semibold",
                         )}
                       >

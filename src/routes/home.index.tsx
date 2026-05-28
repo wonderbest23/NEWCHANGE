@@ -6,6 +6,7 @@ import { SeniorAppLayout } from "@/components/layouts/SeniorAppLayout";
 import { DailyVoiceCheckin } from "@/components/voice/DailyVoiceCheckin";
 import {
   ChevronRight,
+  ChevronDown,
   Loader2,
   MessageCircleHeart,
   HeartPulse,
@@ -85,6 +86,7 @@ function SeniorHome() {
   const { data: today } = useTodayCheckin({ enabled: isAuthenticated });
   const invalidateToday = useInvalidateTodayCheckin();
   const [tab, setTab] = useState<Tab>("details");
+  const [showTodayOverview, setShowTodayOverview] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -166,6 +168,7 @@ function SeniorHome() {
           alreadyDoneToday={!!today?.checkin}
           todayCondition={(today?.checkin?.condition_level ?? null) as any}
           todayMood={today?.checkin?.mood_status ?? null}
+          savedTurns={turns as any[]}
           onAnalyzed={() => {
             invalidateToday();
           }}
@@ -210,40 +213,57 @@ function SeniorHome() {
        *    안부 완료 시: 실데이터 / 미완료 시: dash + 안내
        * ─────────────────────────────────────────────────────────*/}
       <section className="mt-6 animate-rise-in delay-150">
-        <div className="mb-3 flex items-end justify-between gap-3 px-1">
-          <div>
-            <h2 className="font-display text-lg font-bold text-foreground">오늘의 한눈 보기</h2>
-            <p className="mt-0.5 text-xs font-medium text-muted-foreground">통화에서 확인한 오늘 상태예요</p>
-          </div>
-          {checkinDone && (
-            <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full bg-background px-3 py-1 text-xs font-bold ring-1 ring-border/70", cond.text)}>
-              <span className={cn("h-1.5 w-1.5 rounded-full", cond.dot)} />
-              {cond.label}
+        <div className="overflow-hidden rounded-2xl border border-border/70 bg-background shadow-soft">
+          <button
+            type="button"
+            onClick={() => setShowTodayOverview((v) => !v)}
+            className="flex min-h-[64px] w-full items-center gap-3 px-4 py-3 text-left"
+            aria-expanded={showTodayOverview}
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Smile className="h-5 w-5" />
             </span>
-          )}
-        </div>
-        <div className="overflow-hidden rounded-2xl border border-border/70 bg-background">
-          {[
-            { meta: mood, key: "기분", icon: Smile },
-            { meta: meal, key: "식사", icon: Utensils },
-            { meta: medicine, key: "복약", icon: Pill },
-          ].map(({ meta, key, icon: Icon }, index) => (
-            <div
-              key={key}
-              className={cn(
-                "flex min-h-[72px] items-center gap-3 px-4 py-3",
-                index > 0 && "border-t border-border/60",
-              )}
-            >
-              <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", meta.color)}>
-                <Icon className={cn("h-5 w-5", meta.text)} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-muted-foreground">{key}</p>
-                <p className={cn("mt-0.5 text-base font-bold leading-snug", meta.text)}>{meta.label}</p>
-              </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="font-display text-base font-bold text-foreground">오늘의 한눈 보기</h2>
+              <p className="mt-0.5 truncate text-xs font-medium text-muted-foreground">
+                {checkinDone
+                  ? `기분 ${mood.label} · 식사 ${meal.label} · 복약 ${medicine.label}`
+                  : "통화를 마치면 오늘 상태가 채워져요"}
+              </p>
             </div>
-          ))}
+            {checkinDone && (
+              <span className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full bg-surface px-3 py-1 text-xs font-bold", cond.text)}>
+                <span className={cn("h-1.5 w-1.5 rounded-full", cond.dot)} />
+                {cond.label}
+              </span>
+            )}
+            <ChevronDown className={cn("h-5 w-5 shrink-0 text-foreground/45 transition-transform", showTodayOverview && "rotate-180")} />
+          </button>
+          {showTodayOverview && (
+            <div className="border-t border-border/60">
+              {[
+                { meta: mood, key: "기분", icon: Smile },
+                { meta: meal, key: "식사", icon: Utensils },
+                { meta: medicine, key: "복약", icon: Pill },
+              ].map(({ meta, key, icon: Icon }, index) => (
+                <div
+                  key={key}
+                  className={cn(
+                    "flex min-h-[64px] items-center gap-3 px-4 py-3",
+                    index > 0 && "border-t border-border/60",
+                  )}
+                >
+                  <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", meta.color)}>
+                    <Icon className={cn("h-5 w-5", meta.text)} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold text-muted-foreground">{key}</p>
+                    <p className={cn("mt-0.5 text-base font-bold leading-snug", meta.text)}>{meta.label}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         {!checkinDone && (
           <p className="mt-3 rounded-2xl border border-border/60 bg-surface px-4 py-3 text-sm font-medium text-muted-foreground">
@@ -251,27 +271,6 @@ function SeniorHome() {
           </p>
         )}
       </section>
-
-      {/* ─────────────────────────────────────────────────────────
-       * 4. AI 한 줄 요약 — 안부 완료 시
-       * ─────────────────────────────────────────────────────────*/}
-      {checkinDone && report?.senior_report_text && (
-        <section className="mt-5 animate-rise-in delay-200">
-          <div className="rounded-2xl border border-border/70 bg-background p-5 shadow-soft">
-            <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <MessageCircleHeart className="h-5 w-5" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold text-primary">오늘의 요약</p>
-                <p className="mt-1.5 text-base leading-relaxed text-foreground">
-                  {report.senior_report_text}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
 
       {/* ─────────────────────────────────────────────────────────
        * 5. 이번 주 기록 — 실제 주간 상세 탭으로 이동
