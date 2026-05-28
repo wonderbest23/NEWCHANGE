@@ -48,8 +48,16 @@ export function useGeneratedModel(kind: string) {
         data: { kind },
         headers: await authHeaders(),
       } as Parameters<typeof getActiveAsset>[0]),
-    staleTime: 60_000,
+    staleTime: 30_000,
     retry: 1,
+    // 시나리오 진입 시마다 다시 가져온다 (admin 에서 새로 만든 모델 즉시 반영).
+    refetchOnMount: "always",
+    // 모델이 아직 없으면 20초마다 polling — admin 에서 success 되면 자동 적용.
+    refetchInterval: (query) => {
+      const data = query.state.data as unknown as { ok?: boolean; asset?: { glb_url?: string | null } } | undefined;
+      const hasModel = !!data?.asset?.glb_url;
+      return hasModel ? false : 20_000;
+    },
   });
 
   const [group, setGroup] = useState<THREE.Group | null>(null);

@@ -8,7 +8,7 @@
  * 권한: 서버 fn 안에서 ADMIN_USER_IDS env 검증. 미설정 dev 면 누구나.
  */
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Power, RefreshCw, Sparkles, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
@@ -63,6 +63,7 @@ function AssetForgePage() {
         data: {},
         headers: await authHeaders(),
       } as Parameters<typeof listAssets>[0]),
+    refetchOnMount: "always",
     refetchInterval: (data) => {
       // 진행 중인 게 있으면 10초마다 자동 새로고침
       const res = data.state.data;
@@ -148,6 +149,21 @@ function AssetForgePage() {
     listQ.data && "ok" in listQ.data && !listQ.data.ok && listQ.data.reason === "not_admin";
 
   const presets = PROMPT_PRESETS[kind] ?? [];
+
+  // 로컬 dev / 빠른 검증용 — 진행 중인 자산이 보이면 자동으로 각각 poll 발사.
+  // production 에서는 cron 이 같은 일을 하지만, 로컬에선 페이지 켜둔 동안 자동 진행.
+  const runningIds = list
+    .filter((a) => a.status === "queued" || a.status === "running")
+    .map((a) => a.id);
+  const runningKey = runningIds.join(",");
+  useEffect(() => {
+    if (runningIds.length === 0) return;
+    const t = setInterval(() => {
+      runningIds.forEach((id) => pollMut.mutate(id));
+    }, 8000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runningKey]);
 
   if (notAdmin) {
     const yourId =
