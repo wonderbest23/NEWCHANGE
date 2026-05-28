@@ -10,6 +10,7 @@ import { haversineM, CATCH_RADIUS_M } from "@/lib/game/geo";
 import {
   acceptWalkMonsterConsent,
   catchWalkMonster,
+  forceSpawnNearby,
   getWalkMonsterProfile,
   resetWalkMonsterSession,
   syncWalkMonsterSession,
@@ -257,6 +258,48 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
     onError: (e) => toast.error(e instanceof Error ? e.message : "포획 실패"),
   });
 
+  const forceSpawnMut = useMutation({
+    mutationFn: async (payload: { latitude: number; longitude: number }) =>
+      forceSpawnNearby({
+        data: payload,
+        headers: await authHeaders(),
+      } as Parameters<typeof forceSpawnNearby>[0]),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        const msg =
+          res.reason === "cooldown"
+            ? "30초마다 한 번씩 소환할 수 있어요"
+            : res.reason === "too_many_active"
+              ? "이미 주변에 몬스터가 충분해요"
+              : res.reason === "no_consent"
+                ? "동의가 필요해요"
+                : "소환할 수 없어요";
+        toast.info(msg);
+        return;
+      }
+      toast.success(`테스트 몬스터 등장! (${res.distance_m}m)`);
+      qc.invalidateQueries({ queryKey: ["walk-monster-profile"] });
+    },
+  });
+
+  // 동의 후 활성 스폰이 0개인 첫 1회: 자동으로 테스트 스폰 1마리.
+  // 사용자가 걷기 전이라도 바로 게임 흐름을 체험할 수 있게.
+  const autoSpawnTriedRef = useRef(false);
+  useEffect(() => {
+    const data = profileQ.data;
+    if (!data || !userPos) return;
+    if (!data.profile?.has_consent) return;
+    if (autoSpawnTriedRef.current) return;
+    if ((data.active_spawns?.length ?? 0) > 0) {
+      // 이미 있으면 굳이 시도 안 함.
+      autoSpawnTriedRef.current = true;
+      return;
+    }
+    autoSpawnTriedRef.current = true;
+    forceSpawnMut.mutate({ latitude: userPos.lat, longitude: userPos.lng });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileQ.data, userPos]);
+
   const resetMut = useMutation({
     mutationFn: async () =>
       resetWalkMonsterSession({
@@ -414,6 +457,15 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
         stopTracking();
         setExited(true);
       }}
+      onForceSpawn={() => {
+        if (!userPos) {
+          toast.info("위치를 확인한 뒤 다시 시도해 주세요");
+          refreshUserPosition();
+          return;
+        }
+        forceSpawnMut.mutate({ latitude: userPos.lat, longitude: userPos.lng });
+      }}
+      isSpawning={forceSpawnMut.isPending}
     />
   );
 }

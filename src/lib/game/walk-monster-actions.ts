@@ -529,6 +529,81 @@ export const purchaseWalkMonsterItem = createServerFn({ method: "POST" })
     return { ok: true as const, item_key: item.key, coins_left: profile.coins - item.price };
   });
 
+/**
+ * 테스트/베타용 즉시 스폰. 사용자 현 위치에서 20~40m 오프셋에 1마리 강제 생성.
+ *
+ * 안전 장치:
+ *  - 동의된 사용자만
+ *  - 직전 force-spawn 으로부터 30초 쿨다운 (sync row 시간 기준)
+ *  - 활성 스폰이 이미 5개 이상이면 거절 (DB 폭주 방지)
+ */
+const ForceSpawnSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+});
+
+export const forceSpawnNearby = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data) => ForceSpawnSchema.parse(data))
+  .handler(async ({ context, data }) => {
+    const { supabase, userId } = context;
+    const profile = await ensureProfile(supabase, userId);
+    if (!profile.location_consent_at) {
+      return { ok: false as const, reason: "no_consent" as const };
+    }
+
+    // 활성 스폰 카운트 확인.
+    const { count } = await supabase
+      .from("game_spawns" as any)
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("status", "active");
+    if ((count ?? 0) >= 5) {
+      return { ok: false as const, reason: "too_many_active" as const };
+    }
+
+    // 30초 쿨다운: 최근 30초 안에 reason='force' 로 생성된 스폰이 있으면 거절.
+    const cooldownStart = new Date(Date.now() - 30_000).toISOString();
+    const { data: recent } = await supabase
+      .from("game_spawns" as any)
+      .select("id")
+      .eq("user_id", userId)
+      .gte("created_at", cooldownStart)
+      .limit(1);
+    if (recent && recent.length > 0) {
+      return { ok: false as const, reason: "cooldown" as const };
+    }
+
+    // 20~40m 오프셋
+    const angle = Math.random() * Math.PI * 2;
+    const distM = 20 + Math.random() * 20;
+    const dLat = (distM / 111_320) * Math.cos(angle);
+    const dLng =
+      (distM / (111_320 * Math.cos((data.latitude * Math.PI) / 180))) * Math.sin(angle);
+    const monster = pickMonster(profile.level);
+    const expiresAt = new Date(Date.now() + SPAWN_TTL_MIN * 60_000).toISOString();
+
+    const { data: row, error } = await supabase
+      .from("game_spawns" as any)
+      .insert({
+        user_id: userId,
+        monster_key: monster.key,
+        rarity: monster.rarity,
+        latitude: data.latitude + dLat,
+        longitude: data.longitude + dLng,
+        expires_at: expiresAt,
+      })
+      .select("id, monster_key, rarity, latitude, longitude, status, expires_at, created_at")
+      .single();
+    if (error) throw error;
+
+    return {
+      ok: true as const,
+      spawn: row as unknown as SpawnRow,
+      distance_m: Math.round(distM),
+    };
+  });
+
 export const useWalkMonsterRadarExtender = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {

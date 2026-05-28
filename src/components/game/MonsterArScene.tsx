@@ -40,6 +40,13 @@ export interface MonsterArSceneProps {
   distanceM?: number;
   /** 디바이스 나침반 방위. null이면 정면 가정. */
   compassHeading?: number | null;
+
+  /**
+   * 객체 인식 기반 스크린 앵커. 정규화된 좌표 (0..1) + 박스 크기.
+   * 제공되면 bearing-based 위치를 이쪽으로 부드럽게 끌어당겨 "이 객체 위에
+   * 앉아있는 듯한" 느낌을 만든다. null 이면 bearing-only.
+   */
+  screenAnchor?: { x: number; y: number; size: number } | null;
 }
 
 const RARITY_COLOR: Record<MonsterRarity, number> = {
@@ -191,6 +198,7 @@ export function MonsterArScene({
   bearingDeg: monsterBearing,
   distanceM,
   compassHeading,
+  screenAnchor,
 }: MonsterArSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -206,6 +214,10 @@ export function MonsterArScene({
   hitsRef.current = hits;
   const requiredRef = useRef(hitsRequired);
   requiredRef.current = hitsRequired;
+  const anchorRef = useRef<{ x: number; y: number; size: number } | null>(
+    screenAnchor ?? null,
+  );
+  anchorRef.current = screenAnchor ?? null;
 
   const stateRef = useRef<{
     renderer: THREE.WebGLRenderer;
@@ -400,11 +412,29 @@ export function MonsterArScene({
       prevNotice = noticed;
 
       // ── 몬스터 위치 (렌더 깊이는 고정) ─────────────────────
-      const baseX = Math.sin(lateralRad) * RENDER_DEPTH;
-      const baseZ = -Math.cos(lateralRad) * RENDER_DEPTH;
+      let baseX = Math.sin(lateralRad) * RENDER_DEPTH;
+      let baseZ = -Math.cos(lateralRad) * RENDER_DEPTH;
+      let baseYBias = 0;
 
-      // 호버
-      const hoverY = 0 + Math.sin(t * 2.0) * 0.07;
+      // 객체 인식 anchor 가 제공되면 bearing-based 위치를 그쪽으로 lerp.
+      // anchor.x/y 는 0..1 정규화 좌표 (0=좌상, 1=우하).
+      // 카메라 시야 가운데(0.5, 0.5) 가 z=-RENDER_DEPTH 정중앙에 대응.
+      const anchor = anchorRef.current;
+      if (anchor) {
+        const fovRad = (HFOV_DEG * Math.PI) / 180;
+        const halfWidthAtDepth = Math.tan(fovRad / 2) * RENDER_DEPTH;
+        // anchor 가 화면 가로축에서 (0.5 - x) 만큼 떨어졌을 때 world x 거리.
+        const anchorXWorld = (0.5 - anchor.x) * 2 * halfWidthAtDepth * -1;
+        // 세로축은 카메라 aspect 고려가 필요하지만 대략 같은 스케일로 처리.
+        const anchorYWorld = (0.5 - anchor.y) * 2 * halfWidthAtDepth * 0.8;
+        // bearing 결과와 anchor 결과를 75:25 → 점점 anchor 쪽으로 (씬 내부 lerp 는
+        // 매 프레임 누적되므로 한 번에 끌어당기지 않음)
+        baseX += (anchorXWorld - baseX) * 0.18;
+        baseYBias = anchorYWorld * 0.35; // 너무 위/아래는 부자연스러우니 일부만
+      }
+
+      // 호버 (+ 객체 앵커가 화면 위쪽이면 살짝 위에, 아래쪽이면 살짝 아래로)
+      const hoverY = baseYBias + Math.sin(t * 2.0) * 0.07;
 
       // 숨김 상태에선 약간 아래로 가라앉음 (peek-a-boo)
       const hideDip = (1 - st.aimScore) * -0.35;
