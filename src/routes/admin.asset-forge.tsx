@@ -150,12 +150,41 @@ function AssetForgePage() {
   const presets = PROMPT_PRESETS[kind] ?? [];
 
   if (notAdmin) {
+    const yourId =
+      listQ.data && "your_user_id" in listQ.data
+        ? (listQ.data as { your_user_id?: string }).your_user_id
+        : undefined;
     return (
-      <div className="mx-auto max-w-md py-16 text-center">
+      <div className="mx-auto max-w-xl px-4 py-16 text-center">
         <p className="text-foreground/80">관리자 권한이 필요합니다.</p>
-        <p className="mt-2 text-xs text-foreground/55">
-          ADMIN_USER_IDS 환경 변수에 본인 user_id 추가하세요.
+        <p className="mt-4 text-xs text-foreground/55">
+          아래 ID를 Cloudflare 환경변수 <code>ADMIN_USER_IDS</code> 에 추가하세요.
         </p>
+        {yourId && (
+          <>
+            <div className="mt-4 break-all rounded-lg border border-border bg-muted/40 p-3 text-left font-mono text-xs">
+              {yourId}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => {
+                navigator.clipboard?.writeText(yourId).catch(() => null);
+                toast.success("복사됨");
+              }}
+            >
+              복사
+            </Button>
+            <p className="mt-6 text-[11px] leading-relaxed text-foreground/55">
+              터미널에서:
+              <br />
+              <code className="break-all">
+                echo "{yourId}" | npx wrangler secret put ADMIN_USER_IDS
+              </code>
+            </p>
+          </>
+        )}
       </div>
     );
   }

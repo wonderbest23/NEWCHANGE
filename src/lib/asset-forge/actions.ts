@@ -183,7 +183,11 @@ export const listAssets = createServerFn({ method: "GET" })
   .inputValidator((d) => ListSchema.parse(d ?? {}))
   .handler(async ({ context, data }) => {
     const { userId } = context;
-    if (!isAdmin(userId)) return { ok: false as const, reason: "not_admin" as const };
+    if (!isAdmin(userId)) {
+      // 디버그용: admin 거부 시 본인 user_id 를 함께 반환해
+      // 환경변수에 정확히 무엇을 넣어야 하는지 알 수 있도록.
+      return { ok: false as const, reason: "not_admin" as const, your_user_id: userId };
+    }
     let q = supabaseAdmin
       .from("generated_assets" as never)
       .select("*")
