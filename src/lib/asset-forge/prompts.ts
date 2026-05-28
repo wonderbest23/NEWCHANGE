@@ -274,6 +274,11 @@ export const PROMPT_PRESETS: Record<string, PromptPreset[]> = {
   // ── 기타 (자유 입력) ───────────────────────────────────────────
   generic: [
     {
+      label: "낚싯대 (Mobile WebAR)",
+      prompt:
+        "Mobile WebAR fishing rod game asset, simple clean fishing rod with reel, stylized semi-realistic, optimized for mobile GLB, low-poly, PBR texture, no brand logo, no background, game-ready asset. Negative: real brand logo, overly complex reel, too many tiny parts, high polygon count, broken geometry",
+    },
+    {
       label: "벤치",
       prompt: "wooden park bench, stylized, two-seat with curved backrest",
     },

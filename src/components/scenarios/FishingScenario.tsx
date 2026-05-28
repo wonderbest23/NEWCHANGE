@@ -274,7 +274,7 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
               <h2 className="font-display text-base">{session.spotName}</h2>
               <p className="text-[11px] opacity-80">
                 <Users className="mr-0.5 inline h-3 w-3" />
-                근처 {session.nearbyPlayers}명
+                같이 낚시 중 {session.nearbyPlayers}명
               </p>
             </div>
             <button
@@ -300,17 +300,22 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
           )}
 
           {session.phase === "bite" && (
-            <div className="mt-2 flex items-center gap-2 text-xs">
-              <Timer className="h-3.5 w-3.5" />
-              <span>{(session.biteRemainingMs / 1000).toFixed(1)}s</span>
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/30">
-                <div
-                  className="h-full bg-amber-300"
-                  style={{
-                    width: `${Math.max(0, (session.biteRemainingMs / biteWindowMax) * 100)}%`,
-                  }}
-                />
+            <div className="mt-2 space-y-1">
+              <div className="flex items-center gap-2 text-xs">
+                <Timer className="h-3.5 w-3.5" />
+                <span>{(session.biteRemainingMs / 1000).toFixed(1)}s</span>
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-black/30">
+                  <div
+                    className="h-full bg-amber-300"
+                    style={{
+                      width: `${Math.max(0, (session.biteRemainingMs / biteWindowMax) * 100)}%`,
+                    }}
+                  />
+                </div>
               </div>
+              <p className="animate-pulse text-center text-[11px] font-semibold text-amber-200">
+                지금 당기세요!
+              </p>
             </div>
           )}
 
@@ -337,7 +342,7 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
           )}
         >
           <p className="text-3xl font-bold text-white drop-shadow-2xl">
-            {fishMeta.emoji} {fishMeta.name}
+            {fishMeta.emoji} {fishMeta.name} 포획!
           </p>
           <p className="mt-1 text-base font-semibold text-amber-200 drop-shadow-lg">
             +{fishMeta.xp} XP · +{fishMeta.coins} 코인

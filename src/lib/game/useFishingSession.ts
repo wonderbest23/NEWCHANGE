@@ -39,7 +39,7 @@ export const FISH_META: Record<FishKey, FishMeta> = {
   minnow: { key: "minnow", name: "송사리", emoji: "🐟", rarity: "common", hp: 40, xp: 8, coins: 4, fightSpeed: 1.0 },
   bass: { key: "bass", name: "배스", emoji: "🐠", rarity: "common", hp: 60, xp: 12, coins: 6, fightSpeed: 1.2 },
   carp: { key: "carp", name: "잉어", emoji: "🐡", rarity: "rare", hp: 90, xp: 30, coins: 18, fightSpeed: 1.5 },
-  goldfish: { key: "goldfish", name: "황금잉어", emoji: "🥇", rarity: "legendary", hp: 140, xp: 80, coins: 50, fightSpeed: 2.0 },
+  goldfish: { key: "goldfish", name: "황금 비단잉어", emoji: "🥇", rarity: "legendary", hp: 140, xp: 80, coins: 50, fightSpeed: 2.0 },
 };
 
 function pickFishByLuck(luck = 1): FishKey {
@@ -54,13 +54,7 @@ function pickFishByLuck(luck = 1): FishKey {
   return "minnow";
 }
 
-const SPOT_NAMES = [
-  "달빛 연못",
-  "노을 호숫가",
-  "새벽안개 강가",
-  "이슬숲 계곡",
-  "별빛 못",
-];
+const SPOT_NAMES = ["서울숲 AR 낚시터"];
 
 interface UseFishingSessionOpts {
   onReward?: (params: { fish: FishMeta; success: boolean }) => void;
@@ -123,9 +117,9 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
   // 가짜 다중 플레이어 — 추후 supabase presence channel 로 교체.
   useEffect(() => {
     const t = setInterval(() => {
-      setNearbyPlayers(Math.max(0, Math.floor(Math.random() * 5) + 1));
+      setNearbyPlayers(Math.max(1, Math.floor(Math.random() * 5) + 6));
     }, 9000);
-    setNearbyPlayers(Math.max(0, Math.floor(Math.random() * 4) + 1));
+    setNearbyPlayers(8);
     return () => clearInterval(t);
   }, []);
 
