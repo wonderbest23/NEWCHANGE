@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { authHeaders } from "@/lib/auth/server-fn-headers";
+import { haversineM, CATCH_RADIUS_M } from "@/lib/game/geo";
 import { monsterByKey, RARITY_META } from "@/lib/game/monsters";
 import {
   acceptWalkMonsterConsent,
@@ -26,17 +27,10 @@ import {
   syncWalkMonsterSession,
 } from "@/lib/game/walk-monster-actions";
 import { cn } from "@/lib/utils";
-
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+import { MonsterCatchCamera } from "@/components/game/MonsterCatchCamera";
+import { SpawnRadarMap } from "@/components/game/SpawnRadarMap";
+import { GameInventoryPanel } from "@/components/game/GameInventoryPanel";
+import { GameLeaderboard } from "@/components/game/GameLeaderboard";
 
 type ActiveSpawn = {
   id: string;
@@ -44,25 +38,51 @@ type ActiveSpawn = {
   rarity: "common" | "rare" | "legendary";
   latitude: number;
   longitude: number;
+  distance_m: number | null;
+  in_range: boolean;
 };
+
+type UserPos = { lat: number; lng: number };
 
 export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
   const qc = useQueryClient();
   const [tracking, setTracking] = useState(false);
+  const [userPos, setUserPos] = useState<UserPos | null>(null);
   const [catchTarget, setCatchTarget] = useState<ActiveSpawn | null>(null);
   const [tapCount, setTapCount] = useState(0);
+  const [useOrb, setUseOrb] = useState(false);
   const lastPosRef = useRef<{ lat: number; lng: number; t: number } | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const pendingSyncRef = useRef(false);
 
   const profileQ = useQuery({
-    queryKey: ["walk-monster-profile"],
+    queryKey: ["walk-monster-profile", userPos?.lat, userPos?.lng],
     queryFn: async () =>
       getWalkMonsterProfile({
+        data: userPos ? { latitude: userPos.lat, longitude: userPos.lng } : undefined,
         headers: await authHeaders(),
       } as Parameters<typeof getWalkMonsterProfile>[0]),
     enabled: !gateError,
   });
+
+  const inventory = profileQ.data?.inventory ?? [];
+  const orbQty = inventory.find((i) => i.item_key === "capture_orb")?.quantity ?? 0;
+  const tapsRequired = useOrb && orbQty > 0 ? 2 : 3;
+
+  const refreshUserPosition = useCallback(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setUserPos({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 },
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!gateError && profileQ.data?.profile?.has_consent) {
+      refreshUserPosition();
+    }
+  }, [gateError, profileQ.data?.profile?.has_consent, refreshUserPosition]);
 
   const consentMut = useMutation({
     mutationFn: async () =>
@@ -70,8 +90,12 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
         headers: await authHeaders(),
       } as Parameters<typeof acceptWalkMonsterConsent>[0]),
     onSuccess: () => {
-      toast.success("동의가 저장되었어요. 산책을 시작해 보세요!");
+      toast.success("동의가 저장되었어요. 스타터 아이템이 지급됐어요!");
       qc.invalidateQueries({ queryKey: ["walk-monster-profile"] });
+      refreshUserPosition();
+      if ("Notification" in window && Notification.permission === "default") {
+        void Notification.requestPermission();
+      }
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "저장 실패"),
   });
@@ -95,15 +119,25 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
       }
       if (res.new_spawns?.length) {
         toast.success(`몬스터가 나타났어요! (${res.new_spawns.length}마리)`);
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("산책 몬스터", {
+            body: "근처에 몬스터가 나타났어요! 앱에서 포획해 보세요.",
+          });
+        }
       }
       qc.invalidateQueries({ queryKey: ["walk-monster-profile"] });
     },
   });
 
   const catchMut = useMutation({
-    mutationFn: async (spawnId: string) =>
+    mutationFn: async (payload: {
+      spawn_id: string;
+      latitude: number;
+      longitude: number;
+      use_orb?: boolean;
+    }) =>
       catchWalkMonster({
-        data: { spawn_id: spawnId },
+        data: payload,
         headers: await authHeaders(),
       } as Parameters<typeof catchWalkMonster>[0]),
     onSuccess: (res) => {
@@ -113,17 +147,22 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
             ? "오늘 포획 한도에 도달했어요"
             : res.reason === "expired"
               ? "몬스터가 사라졌어요"
-              : "포획에 실패했어요";
+              : res.reason === "too_far"
+                ? `너무 멀어요 (${"distance_m" in res ? res.distance_m : "?"}m / ${CATCH_RADIUS_M}m 이내)`
+                : "포획에 실패했어요";
         toast.error(msg);
         setCatchTarget(null);
         setTapCount(0);
+        setUseOrb(false);
         qc.invalidateQueries({ queryKey: ["walk-monster-profile"] });
         return;
       }
       toast.success(`${res.monster_emoji} ${res.monster_name} 포획! +${res.xp_gained} XP`);
       setCatchTarget(null);
       setTapCount(0);
+      setUseOrb(false);
       qc.invalidateQueries({ queryKey: ["walk-monster-profile"] });
+      qc.invalidateQueries({ queryKey: ["walk-monster-leaderboard"] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "포획 실패"),
   });
@@ -151,6 +190,7 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
   const handlePosition = useCallback(
     (pos: GeolocationPosition) => {
       const { latitude, longitude, accuracy } = pos.coords;
+      setUserPos({ lat: latitude, lng: longitude });
       const now = Date.now();
       let deltaM = 0;
       const prev = lastPosRef.current;
@@ -199,12 +239,32 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
 
   useEffect(() => () => stopTracking(), [stopTracking]);
 
+  const openCatch = (spawn: ActiveSpawn) => {
+    if (!userPos) {
+      toast.info("위치를 확인한 뒤 다시 시도해 주세요");
+      refreshUserPosition();
+      return;
+    }
+    if (!spawn.in_range) {
+      toast.warning(`${spawn.distance_m ?? "?"}m — ${CATCH_RADIUS_M}m 안으로 가까이 가 주세요`);
+      return;
+    }
+    setCatchTarget(spawn);
+    setTapCount(0);
+    setUseOrb(orbQty > 0);
+  };
+
   const handleCatchTap = () => {
-    if (!catchTarget || catchMut.isPending) return;
+    if (!catchTarget || catchMut.isPending || !userPos) return;
     const next = tapCount + 1;
     setTapCount(next);
-    if (next >= 3) {
-      catchMut.mutate(catchTarget.id);
+    if (next >= tapsRequired) {
+      catchMut.mutate({
+        spawn_id: catchTarget.id,
+        latitude: userPos.lat,
+        longitude: userPos.lng,
+        use_orb: useOrb && orbQty > 0,
+      });
     }
   };
 
@@ -230,6 +290,7 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
   const data = profileQ.data;
   const profile = data?.profile;
   const spawns = (data?.active_spawns ?? []) as ActiveSpawn[];
+  const catchRadius = profile?.catch_radius_m ?? CATCH_RADIUS_M;
   const progressPct = profile
     ? Math.min(100, (profile.spawn_progress_m / profile.spawn_threshold_m) * 100)
     : 0;
@@ -241,16 +302,15 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
           <p className="text-xs font-medium uppercase tracking-wide text-primary">베타</p>
           <h1 className="font-display text-3xl text-foreground">산책 몬스터</h1>
           <p className="mt-2 text-fluid-sm text-foreground/65">
-            밖에서 걸으면 주변에 몬스터가 나타나요. 카메라 AR은 다음 단계예요 — 지금은 탭으로
-            포획합니다.
+            걸으며 몬스터를 찾고, 카메라 AR로 포획하세요. 가방·랭킹·근접 사냥이 추가됐어요.
           </p>
         </header>
         <Card className="space-y-4 border-border p-5">
           <p className="text-fluid-sm text-foreground/75">
-            · 위치 정보는 게임 스폰·이동 거리 계산에만 씁니다.
+            · 위치: 스폰·거리 / 카메라·기울기: AR 포획
             <br />
-            · 안부 산책 인증과 별도로 동작합니다.
-            <br />· 베타 기간에는 URL로만 접근할 수 있어요.
+            · {CATCH_RADIUS_M}m 이내에서만 포획 가능
+            <br />· 스타터 포획구·부스터 지급
           </p>
           <Button
             size="lg"
@@ -298,6 +358,20 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
         </div>
       </Card>
 
+      <Card className="space-y-4 border-border p-4">
+        <h2 className="text-center text-sm font-medium text-foreground/70">주변 레이더</h2>
+        <SpawnRadarMap
+          userLat={userPos?.lat ?? null}
+          userLng={userPos?.lng ?? null}
+          spawns={spawns}
+          catchRadiusM={catchRadius}
+        />
+        <Button variant="outline" size="sm" className="mx-auto flex w-full" onClick={refreshUserPosition}>
+          <MapPin className="mr-2 h-4 w-4" />
+          내 위치 새로고침
+        </Button>
+      </Card>
+
       <Card className="space-y-3 border-border p-4">
         <div className="flex items-center gap-2">
           <Footprints className="h-5 w-5 text-primary" />
@@ -314,12 +388,12 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
         </div>
         <div className="flex gap-2">
           {!tracking ? (
-            <Button className="flex-1 rounded-2xl h-12" onClick={startTracking}>
+            <Button className="h-12 flex-1 rounded-2xl" onClick={startTracking}>
               <Play className="mr-2 h-4 w-4" />
               산책 추적 시작
             </Button>
           ) : (
-            <Button className="flex-1 rounded-2xl h-12" variant="secondary" onClick={stopTracking}>
+            <Button className="h-12 flex-1 rounded-2xl" variant="secondary" onClick={stopTracking}>
               <Pause className="mr-2 h-4 w-4" />
               추적 멈춤
             </Button>
@@ -341,6 +415,8 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
         )}
       </Card>
 
+      <GameInventoryPanel inventory={inventory} coins={profile?.coins ?? 0} />
+
       <section>
         <h2 className="mb-3 flex items-center gap-2 font-display text-xl">
           <Sparkles className="h-5 w-5 text-primary" />
@@ -357,20 +433,27 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
               const meta = RARITY_META[s.rarity];
               return (
                 <li key={s.id}>
-                  <Card className="flex items-center justify-between gap-3 border-border p-4">
+                  <Card
+                    className={cn(
+                      "flex items-center justify-between gap-3 border-border p-4",
+                      s.in_range && "border-primary/40 bg-primary/5",
+                    )}
+                  >
                     <div className="flex items-center gap-3">
                       <span className="text-4xl">{def?.emoji ?? "❓"}</span>
                       <div>
                         <p className="font-semibold">{def?.name ?? s.monster_key}</p>
                         <p className={cn("text-xs", meta.color)}>{meta.label}</p>
+                        <p className="text-xs text-foreground/50">
+                          {s.distance_m != null ? `${s.distance_m}m` : "—"}
+                          {s.in_range ? " · 포획 가능" : ` · ${catchRadius}m 이내로`}
+                        </p>
                       </div>
                     </div>
                     <Button
                       className="rounded-xl"
-                      onClick={() => {
-                        setCatchTarget(s);
-                        setTapCount(0);
-                      }}
+                      variant={s.in_range ? "default" : "outline"}
+                      onClick={() => openCatch(s)}
                     >
                       <Target className="mr-1 h-4 w-4" />
                       포획
@@ -383,30 +466,27 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
         )}
       </section>
 
+      <GameLeaderboard />
+
       <p className="text-center text-xs text-foreground/45">
         오늘 포획 {data?.catches_today ?? 0} / {data?.daily_limit ?? 30}
       </p>
 
       {catchTarget && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
-          <Card className="w-full max-w-sm space-y-4 border-primary/30 p-6 shadow-xl">
-            <p className="text-center text-sm text-foreground/60">빠르게 3번 탭하세요!</p>
-            <button
-              type="button"
-              className="mx-auto flex h-36 w-36 flex-col items-center justify-center rounded-full bg-primary/15 text-6xl transition active:scale-95"
-              onClick={handleCatchTap}
-              disabled={catchMut.isPending}
-            >
-              {monsterByKey(catchTarget.monster_key)?.emoji ?? "✨"}
-              <span className="mt-2 text-base font-semibold text-foreground">
-                {tapCount} / 3
-              </span>
-            </button>
-            <Button variant="ghost" className="w-full" onClick={() => setCatchTarget(null)}>
-              취소
-            </Button>
-          </Card>
-        </div>
+        <MonsterCatchCamera
+          monsterKey={catchTarget.monster_key}
+          rarityLabel={RARITY_META[catchTarget.rarity].label}
+          tapCount={tapCount}
+          tapsRequired={tapsRequired}
+          useOrb={useOrb && orbQty > 0}
+          onTap={handleCatchTap}
+          onClose={() => {
+            setCatchTarget(null);
+            setTapCount(0);
+            setUseOrb(false);
+          }}
+          disabled={catchMut.isPending}
+        />
       )}
     </div>
   );

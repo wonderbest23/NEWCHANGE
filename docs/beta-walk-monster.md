@@ -2,27 +2,32 @@
 
 ## 접속
 
-1. 로그인 후 브라우저에서 `/beta/walk-monster` 로 이동
-2. (선택) `.env`에 `VITE_BETA_GAME_GATE=비밀값` 설정 시 → `/beta/walk-monster?key=비밀값`
-3. `VITE_BETA_GAME_ENABLED=0` 이면 베타 비활성
+1. 로그인 후 `/beta/walk-monster`
+2. (선택) `VITE_BETA_GAME_GATE` → `?key=비밀값`
+3. `VITE_BETA_GAME_ENABLED=0` 이면 비활성
 
 ## DB
 
-Supabase에 마이그레이션 적용:
+1. `docs/schema/007_beta_walk_monster_game.sql` — 프로필·스폰·포획
+2. `docs/schema/008_game_inventory.sql` — 가방·아이템
 
-- `supabase/migrations/20260527120000_beta_walk_monster_game.sql`
-- 또는 SQL Editor: `docs/schema/007_beta_walk_monster_game.sql`
+## 플레이 (베타 1)
 
-## 플레이
+1. 동의 → 스타터 **포획구×5**, **걸음 부스터×2**
+2. **레이더**에서 내 위치·몬스터 방향 확인
+3. 산책 추적 → 50m마다 스폰
+4. **80m 이내**에서만 포획
+5. 포획 → 카메라 + **기울기 AR** (iOS는 「AR 움직임 허용」)
+6. 포획구: 탭 2번 · +5 코인
+7. 코인으로 상점 구매 · 부스터로 스폰 거리 10m 단축
+8. 포획 랭킹
 
-1. 위치·게임 동의
-2. **산책 추적 시작** → 실외에서 걷기 (GPS)
-3. **50m**마다 몬스터 스폰
-4. **포획** → 화면을 3번 탭
-5. XP·코인·레벨 적립 (안부 `walk_checkins` 와 별도)
+## 카메라·AR
 
-## 한계 (베타 0)
+- HTTPS / localhost 필수
+- 기울기 센서: iOS Safari에서 버튼으로 권한 요청
 
-- AR 카메라 없음 (2D 탭 포획)
-- 실시간 맵 없음
-- 스폰은 현재 위치 기준 오프셋
+## 한계
+
+- 3D AR.js / 월드 트래킹 미구현
+- Google 지도 타일 없음 (원형 레이더만)

@@ -1,6 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { CATCH_RADIUS_M, haversineM } from "@/lib/game/geo";
+import { GAME_ITEMS, STARTER_ITEMS, type GameItemKey } from "@/lib/game/items";
 import {
   DAILY_CATCH_LIMIT,
   RARITY_META,
@@ -19,23 +22,26 @@ const SyncSchema = z.object({
   client_delta_m: z.number().min(0).max(200),
 });
 
+const ProfileQuerySchema = z
+  .object({
+    latitude: z.number().min(-90).max(90).optional(),
+    longitude: z.number().min(-180).max(180).optional(),
+  })
+  .optional();
+
 const CatchSchema = z.object({
   spawn_id: z.string().uuid(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  use_orb: z.boolean().optional(),
+});
+
+const PurchaseSchema = z.object({
+  item_key: z.string(),
 });
 
 function kstDayKey(d: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(d);
-}
-
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 type ProfileRow = {
@@ -83,19 +89,100 @@ async function ensureProfile(
   return created as ProfileRow;
 }
 
+async function ensureStarterInventory(supabase: { from: (t: string) => any }, userId: string) {
+  const { count } = await supabase
+    .from("game_inventory" as any)
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+
+  if ((count ?? 0) > 0) return;
+
+  const rows = STARTER_ITEMS.map((item) => ({
+    user_id: userId,
+    item_key: item.key,
+    quantity: item.quantity,
+    updated_at: new Date().toISOString(),
+  }));
+  const { error } = await supabase.from("game_inventory" as any).insert(rows);
+  if (error) throw error;
+}
+
+async function getInventory(supabase: { from: (t: string) => any }, userId: string) {
+  const { data, error } = await supabase
+    .from("game_inventory" as any)
+    .select("item_key, quantity")
+    .eq("user_id", userId);
+  if (error) throw error;
+  return (data ?? []) as Array<{ item_key: string; quantity: number }>;
+}
+
+async function adjustInventory(
+  supabase: { from: (t: string) => any },
+  userId: string,
+  itemKey: string,
+  delta: number,
+): Promise<boolean> {
+  const { data: row } = await supabase
+    .from("game_inventory" as any)
+    .select("quantity")
+    .eq("user_id", userId)
+    .eq("item_key", itemKey)
+    .maybeSingle();
+
+  const current = (row as { quantity: number } | null)?.quantity ?? 0;
+  const next = current + delta;
+  if (next < 0) return false;
+
+  if (row) {
+    const { error } = await supabase
+      .from("game_inventory" as any)
+      .update({ quantity: next, updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("item_key", itemKey);
+    if (error) throw error;
+  } else if (delta > 0) {
+    const { error } = await supabase.from("game_inventory" as any).insert({
+      user_id: userId,
+      item_key: itemKey,
+      quantity: delta,
+    });
+    if (error) throw error;
+  } else {
+    return false;
+  }
+  return true;
+}
+
 function offsetSpawnLatLng(lat: number, lng: number): { lat: number; lng: number } {
   const angle = Math.random() * Math.PI * 2;
-  const distM = 15 + Math.random() * 35;
+  const distM = 20 + Math.random() * 40;
   const dLat = (distM / 111_320) * Math.cos(angle);
   const dLng = (distM / (111_320 * Math.cos((lat * Math.PI) / 180))) * Math.sin(angle);
   return { lat: lat + dLat, lng: lng + dLng };
 }
 
+function enrichSpawns(
+  spawns: SpawnRow[],
+  userLat?: number,
+  userLng?: number,
+): Array<SpawnRow & { distance_m: number | null; in_range: boolean }> {
+  return spawns.map((s) => {
+    if (userLat == null || userLng == null) {
+      return { ...s, distance_m: null, in_range: false };
+    }
+    const distance_m = Math.round(haversineM(userLat, userLng, s.latitude, s.longitude));
+    return { ...s, distance_m, in_range: distance_m <= CATCH_RADIUS_M };
+  });
+}
+
 export const getWalkMonsterProfile = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
+  .inputValidator((data) => ProfileQuerySchema.parse(data ?? {}))
+  .handler(async ({ context, data }) => {
     const { supabase, userId } = context;
     const profile = await ensureProfile(supabase, userId);
+    await ensureStarterInventory(supabase, userId);
+    const inventory = await getInventory(supabase, userId);
 
     const now = new Date().toISOString();
     await supabase
@@ -112,7 +199,7 @@ export const getWalkMonsterProfile = createServerFn({ method: "GET" })
       .eq("status", "active")
       .gte("expires_at", now)
       .order("created_at", { ascending: false })
-      .limit(5);
+      .limit(8);
 
     const todayStart = new Date(`${kstDayKey(new Date())}T00:00:00+09:00`).toISOString();
     const { count: catchesToday } = await supabase
@@ -120,6 +207,8 @@ export const getWalkMonsterProfile = createServerFn({ method: "GET" })
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
       .gte("created_at", todayStart);
+
+    const active = enrichSpawns((spawns ?? []) as SpawnRow[], data?.latitude, data?.longitude);
 
     return {
       profile: {
@@ -131,8 +220,10 @@ export const getWalkMonsterProfile = createServerFn({ method: "GET" })
         spawn_progress_m: Math.round(profile.spawn_progress_m),
         spawn_threshold_m: SPAWN_DISTANCE_M,
         has_consent: !!profile.location_consent_at,
+        catch_radius_m: CATCH_RADIUS_M,
       },
-      active_spawns: (spawns ?? []) as SpawnRow[],
+      active_spawns: active,
+      inventory,
       catches_today: catchesToday ?? 0,
       daily_limit: DAILY_CATCH_LIMIT,
     };
@@ -143,6 +234,7 @@ export const acceptWalkMonsterConsent = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
     await ensureProfile(supabase, userId);
+    await ensureStarterInventory(supabase, userId);
     const { error } = await supabase
       .from("game_profiles" as any)
       .update({ location_consent_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -227,13 +319,15 @@ export const syncWalkMonsterSession = createServerFn({ method: "POST" })
       .eq("user_id", userId);
     if (upErr) throw upErr;
 
+    const enriched = enrichSpawns(newSpawns, data.latitude, data.longitude);
+
     return {
       ok: true as const,
       added_m: Math.round(deltaM),
       session_distance_m: Math.round(sessionDistance),
       spawn_progress_m: Math.round(spawnProgress),
       spawn_threshold_m: SPAWN_DISTANCE_M,
-      new_spawns: newSpawns,
+      new_spawns: enriched,
     };
   });
 
@@ -270,17 +364,38 @@ export const catchWalkMonster = createServerFn({ method: "POST" })
       return { ok: false as const, reason: "expired" as const };
     }
 
+    const distM = haversineM(data.latitude, data.longitude, spawn.latitude, spawn.longitude);
+    if (distM > CATCH_RADIUS_M + 15) {
+      return {
+        ok: false as const,
+        reason: "too_far" as const,
+        distance_m: Math.round(distM),
+        required_m: CATCH_RADIUS_M,
+      };
+    }
+
     const rarity = spawn.rarity as MonsterRarity;
     const rewards = RARITY_META[rarity] ?? RARITY_META.common;
+    let bonusCoins = 0;
+    let usedOrb = false;
+
+    if (data.use_orb) {
+      const consumed = await adjustInventory(supabase, userId, "capture_orb", -1);
+      if (consumed) {
+        usedOrb = true;
+        bonusCoins = 5;
+      }
+    }
+
     const newXp = profile.xp + rewards.xp;
     const newLevel = levelFromXp(newXp);
-    const newCoins = profile.coins + rewards.coins;
+    const newCoins = profile.coins + rewards.coins + bonusCoins;
 
     const { error: catchErr } = await supabase.from("game_catches" as any).insert({
       user_id: userId,
       spawn_id: data.spawn_id,
       xp_gained: rewards.xp,
-      coins_gained: rewards.coins,
+      coins_gained: rewards.coins + bonusCoins,
     });
     if (catchErr) {
       if (catchErr.code === "23505") return { ok: false as const, reason: "already" as const };
@@ -309,10 +424,122 @@ export const catchWalkMonster = createServerFn({ method: "POST" })
       monster_emoji: def?.emoji ?? "✨",
       rarity,
       xp_gained: rewards.xp,
-      coins_gained: rewards.coins,
+      coins_gained: rewards.coins + bonusCoins,
+      used_orb: usedOrb,
       level: newLevel,
       total_xp: newXp,
       total_coins: newCoins,
+    };
+  });
+
+export const purchaseWalkMonsterItem = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data) => PurchaseSchema.parse(data))
+  .handler(async ({ context, data }) => {
+    const { supabase, userId } = context;
+    const item = GAME_ITEMS[data.item_key as GameItemKey];
+    if (!item) {
+      return { ok: false as const, reason: "invalid_item" as const };
+    }
+
+    const profile = await ensureProfile(supabase, userId);
+    if (profile.coins < item.price) {
+      return { ok: false as const, reason: "not_enough_coins" as const };
+    }
+
+    const { error: coinErr } = await supabase
+      .from("game_profiles" as any)
+      .update({
+        coins: profile.coins - item.price,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId);
+    if (coinErr) throw coinErr;
+
+    await adjustInventory(supabase, userId, item.key, 1);
+
+    return { ok: true as const, item_key: item.key, coins_left: profile.coins - item.price };
+  });
+
+export const useWalkMonsterBooster = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+    const profile = await ensureProfile(supabase, userId);
+    const consumed = await adjustInventory(supabase, userId, "step_booster", -1);
+    if (!consumed) {
+      return { ok: false as const, reason: "no_item" as const };
+    }
+
+    const nextProgress = Math.max(0, profile.spawn_progress_m - 10);
+    const { error } = await supabase
+      .from("game_profiles" as any)
+      .update({ spawn_progress_m: nextProgress, updated_at: new Date().toISOString() })
+      .eq("user_id", userId);
+    if (error) throw error;
+
+    return { ok: true as const, spawn_progress_m: Math.round(nextProgress) };
+  });
+
+export const getWalkMonsterLeaderboard = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { userId } = context;
+
+    const { data: rows, error } = await supabaseAdmin
+      .from("game_profiles" as any)
+      .select("user_id, total_catches, level, xp")
+      .order("total_catches", { ascending: false })
+      .limit(15);
+    if (error) throw error;
+
+    const list = (rows ?? []) as Array<{
+      user_id: string;
+      total_catches: number;
+      level: number;
+      xp: number;
+    }>;
+    const ids = list.map((r) => r.user_id);
+    if (!ids.includes(userId)) ids.push(userId);
+
+    const { data: profs } = ids.length
+      ? await supabaseAdmin.from("profiles").select("id, nickname").in("id", ids)
+      : { data: [] as Array<{ id: string; nickname: string | null }> };
+
+    const nameMap = new Map(
+      ((profs ?? []) as Array<{ id: string; nickname: string | null }>).map((p) => [
+        p.id,
+        p.nickname ?? "이웃",
+      ]),
+    );
+
+    const top = list.slice(0, 10).map((r, i) => ({
+      rank: i + 1,
+      user_id: r.user_id,
+      nickname: nameMap.get(r.user_id) ?? "이웃",
+      total_catches: r.total_catches,
+      level: r.level,
+      is_me: r.user_id === userId,
+    }));
+
+    const myRow = list.find((r) => r.user_id === userId);
+    const myRank = list.findIndex((r) => r.user_id === userId);
+
+    return {
+      top,
+      me: myRow
+        ? {
+            rank: myRank >= 0 ? myRank + 1 : list.length + 1,
+            nickname: nameMap.get(userId) ?? "나",
+            total_catches: myRow.total_catches,
+            level: myRow.level,
+          }
+        : {
+            rank: list.length + 1,
+            nickname: "나",
+            total_catches: 0,
+            level: 1,
+          },
     };
   });
 
