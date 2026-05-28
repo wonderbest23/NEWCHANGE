@@ -38,7 +38,8 @@ const FISH: Record<
   goldfish: { name: "황금잉어", emoji: "🥇", rarity: "legendary", xp: 80, coins: 50 },
 };
 
-function pickFish(): FishKey {
+function pickFish(forced?: FishKey): FishKey {
+  if (forced) return forced;
   const r = Math.random();
   if (r < 0.06) return "goldfish";
   if (r < 0.25) return "carp";
@@ -126,21 +127,35 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
   }, [phase, biteUntilMs]);
 
   // ── biting → reel 성공 ───────────────────────────────────
-  const reel = useCallback(() => {
-    if (phase !== "biting") return;
+  const reel = useCallback(
+    (forcedFish?: FishKey) => {
+      if (phase !== "biting" && !forcedFish) return;
+      if (biteCountdownRef.current) clearInterval(biteCountdownRef.current);
+      setPhase("reeling");
+      fx.finish();
+      setTimeout(() => {
+        const f = pickFish(forcedFish);
+        const meta = FISH[f];
+        toast.success(`${meta.emoji} ${meta.name}! +${meta.xp} XP / +${meta.coins} 코인`);
+        stepMut.mutate("catch_one");
+        setPhase("done");
+        setTimeout(() => onScenarioComplete?.(meta.xp), 1500);
+      }, 1000);
+    },
+    [phase, onScenarioComplete, stepMut],
+  );
+
+  // ── 디버그: 송사리 즉시 잡기 (UI 검증용) ─────────────────
+  const debugCatchMinnow = useCallback(() => {
+    // 모든 타이머 정리 후 reeling 단계로 강제 진입.
+    if (waitTimerRef.current) clearTimeout(waitTimerRef.current);
     if (biteCountdownRef.current) clearInterval(biteCountdownRef.current);
-    setPhase("reeling");
-    fx.finish();
-    setTimeout(() => {
-      const f = pickFish();
-      const meta = FISH[f];
-      toast.success(`${meta.emoji} ${meta.name}! +${meta.xp} XP / +${meta.coins} 코인`);
-      stepMut.mutate("catch_one");
-      setPhase("done");
-      // 한 번 잡았으면 scenario complete (반복하고 싶으면 다시 시작 버튼)
-      setTimeout(() => onScenarioComplete?.(meta.xp), 1500);
-    }, 1000);
-  }, [phase, onScenarioComplete, stepMut]);
+    setBobberPos({ x: 0.5, y: 0.45 });
+    setBiteUntilMs(null);
+    // forced 'minnow' 으로 reel 직행
+    setPhase("biting");
+    setTimeout(() => reel("minnow"), 50);
+  }, [reel]);
 
   useEffect(() => {
     return () => {
@@ -250,7 +265,7 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
         {phase === "biting" && (
           <button
             type="button"
-            onClick={reel}
+            onClick={() => reel()}
             className="flex h-28 w-28 animate-pulse items-center justify-center rounded-full bg-rose-500 text-lg font-bold text-white shadow-2xl ring-4 ring-rose-300/60 active:scale-95"
           >
             당겨!
@@ -262,6 +277,17 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
           </div>
         )}
       </div>
+
+      {/* 디버그: 송사리 즉시 잡기 (테스트용) */}
+      {(phase === "ready" || phase === "casting" || phase === "waiting") && (
+        <button
+          type="button"
+          onClick={debugCatchMinnow}
+          className="pointer-events-auto absolute bottom-44 right-4 z-30 rounded-full bg-fuchsia-500/85 px-3 py-2 text-xs font-bold text-white shadow-lg active:scale-95"
+        >
+          🐟 테스트: 송사리
+        </button>
+      )}
 
       <p className="pointer-events-none absolute bottom-2 left-0 right-0 text-center text-[10px] text-white/45">
         {generatedFish.ready
