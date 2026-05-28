@@ -240,6 +240,21 @@ export function ARWalkSession(props: Props) {
     return null;
   }, [spawns, activeSpawnId]);
 
+  // ── 활성 spawn 방향 vs 현재 폰 방향 (UI 안내용) ──────────────
+  const aimDelta = useMemo(() => {
+    if (!activeSpawn || !userPos || smoothedHeadingRef.current == null) return null;
+    const monsterBearing = bearingDeg(
+      userPos.lat,
+      userPos.lng,
+      activeSpawn.latitude,
+      activeSpawn.longitude,
+    );
+    return bearingDelta(smoothedHeadingRef.current, monsterBearing);
+  }, [activeSpawn?.id, activeSpawn?.latitude, activeSpawn?.longitude, userPos, heading]);
+
+  // 발견 상태 표시용. (실제 hit 판정은 씬 내부 aimScore 가 결정)
+  const isAimed = aimDelta != null && Math.abs(aimDelta) <= 18;
+
   // active spawn 바뀌면 hits 초기화 + 기본 모드 재설정.
   useEffect(() => {
     setHits(0);
@@ -421,30 +436,51 @@ export function ARWalkSession(props: Props) {
             </div>
           </div>
 
-          {/* 활성 spawn 라벨 + HP 바 */}
+          {/* 활성 spawn 라벨 + HP 바 + 발견 상태 안내 */}
           {activeSpawn && def && meta && (
             <div className="pointer-events-none absolute left-0 right-0 top-16 z-10 flex flex-col items-center px-4 text-center">
-              <p className="text-base font-semibold text-white drop-shadow-md">{def.name}</p>
-              <p className="text-xs text-white/85">{meta.label}{useOrb ? " · 포획구 사용" : ""}</p>
-              {/* HP 바 — hits / required 로 진행도 표시 (반대로 줄어듦) */}
-              <div className="mt-2 h-2 w-40 overflow-hidden rounded-full bg-black/40">
-                <div
-                  className={cn(
-                    "h-full transition-all duration-200",
-                    activeSpawn.rarity === "legendary"
-                      ? "bg-amber-300"
-                      : activeSpawn.rarity === "rare"
-                        ? "bg-blue-400"
-                        : "bg-emerald-400",
-                  )}
-                  style={{
-                    width: `${Math.max(0, 100 - (hits / hitsRequired) * 100)}%`,
-                  }}
-                />
-              </div>
-              <p className="mt-1 text-[11px] text-white/65">
-                {hits} / {hitsRequired} 명중 · {modeLabel(mode)}
-              </p>
+              {isAimed ? (
+                <>
+                  <p className="text-base font-semibold text-white drop-shadow-md">
+                    {def.name}
+                  </p>
+                  <p className="text-xs text-white/85">
+                    {meta.label}
+                    {useOrb ? " · 포획구 사용" : ""}
+                  </p>
+                  <div className="mt-2 h-2 w-40 overflow-hidden rounded-full bg-black/40">
+                    <div
+                      className={cn(
+                        "h-full transition-all duration-200",
+                        activeSpawn.rarity === "legendary"
+                          ? "bg-amber-300"
+                          : activeSpawn.rarity === "rare"
+                            ? "bg-blue-400"
+                            : "bg-emerald-400",
+                      )}
+                      style={{
+                        width: `${Math.max(0, 100 - (hits / hitsRequired) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-white/65">
+                    {hits} / {hitsRequired} 명중 · {modeLabel(mode)}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="animate-pulse text-sm font-medium text-white/90 drop-shadow-md">
+                    근처에 {def.name}의 기운이…
+                  </p>
+                  <p className="mt-1 text-[11px] text-white/65">
+                    {aimDelta == null
+                      ? "폰을 좌우로 천천히 돌려 찾아보세요"
+                      : aimDelta < 0
+                        ? "← 왼쪽으로 돌리세요"
+                        : "오른쪽으로 돌리세요 →"}
+                  </p>
+                </>
+              )}
             </div>
           )}
 
@@ -495,11 +531,11 @@ export function ARWalkSession(props: Props) {
             </div>
           )}
 
-          {/* 조준 십자선 */}
-          {activeSpawn && mode === "aim" && (
+          {/* 조준 십자선 — 발견 상태에서만 노출 */}
+          {activeSpawn && mode === "aim" && isAimed && (
             <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
               <div className="relative h-16 w-16">
-                <div className="absolute inset-0 rounded-full border-2 border-white/60" />
+                <div className="absolute inset-0 animate-pulse rounded-full border-2 border-white/80" />
                 <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-white/40" />
                 <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-white/40" />
               </div>

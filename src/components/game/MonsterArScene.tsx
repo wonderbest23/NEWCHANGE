@@ -1,18 +1,20 @@
 /**
- * Three.js 기반 카메라 합성 AR 씬.
+ * Three.js 기반 카메라 합성 AR 씬 — "숨어있다 발견된다" 게임플레이용.
  *
- * 핵심 개선:
- *  - 월드 앵커링: 몬스터가 화면 정가운데에 고정되지 않고, 사용자 GPS 와 나침반
- *    방위각에 따라 실제 환경의 한 방향에 "놓여있다". 폰을 돌리면 몬스터가
- *    시야에 들어왔다 나갔다 한다.
- *  - 거리감/원근감: 거리가 멀수록 작게, 가까울수록 크게. 바닥 그림자 disc 와
- *    살짝 떠 있는 호버 애니메이션으로 "땅에 있는 느낌".
- *  - 타격감: 명중 시 파티클 폭발 + 카메라 셰이크 + 색·스케일 punch + knockback.
- *  - 회피 행동: 무작위로 살짝 옆으로 dart 해 사용자가 다시 조준해야 함.
- *  - 결정타: 점점 빨라지는 회전 + 휘광 + 폭발 파티클 + 화면 플래시 후 카메라 외부에서 fade.
+ * 디자인 의도:
+ *  - 몬스터는 항상 화면에서 충분히 크게 보이도록 *렌더 깊이* 를 고정한다 (3m).
+ *    실제 GPS 거리는 "스케일" 에만 반영. 100m 떨어진 몬스터라도 화면에서 인지될
+ *    크기를 유지해야 게임이 성립한다.
+ *  - 사용자의 폰 방향이 몬스터 방위와 얼마나 일치하는지 aimScore 로 계산한다.
+ *    aimScore 가 낮으면 (looking away) → "숨김" 상태: 작고 반투명, 미세 파티클만.
+ *    aimScore 가 임계 넘으면 → "발견" 상태: 풀 사이즈/풀 컬러, notice 애니메이션
+ *    (점프, 카메라로 고개 돌리기, 파티클 분사) 트리거.
+ *  - 발견 후 사용자가 다시 시선을 돌리면 부드럽게 숨김으로 복귀.
+ *  - 명중 시: 파티클 폭발, 카메라 셰이크, 사운드, 진동, 넉백, 스케일 punch, 결정타 시퀀스.
  *
- * 사용처는 onAim(hit:bool, x, y) 콜백으로 명중 카운트를 관리. 화면 외부에서
- * hits 가 변할 때 본 컴포넌트는 hit reaction 을 트리거.
+ * 한계:
+ *  - 진짜 환경 occlusion (앞에 사물이 있으면 가려짐) 은 웹에서 불가. 대신 "noticed
+ *    되어야만 등장" 메커닉으로 발견의 재미를 흉내낸다.
  */
 
 import { useEffect, useRef } from "react";
@@ -32,11 +34,11 @@ export interface MonsterArSceneProps {
   onAim: (hit: boolean, screenX: number, screenY: number) => void;
   monsterName?: string;
 
-  /** 사용자 위치에서 몬스터를 바라보는 방위각(0~360°). 없으면 정면 가정. */
+  /** 사용자→몬스터 방위각 0~360°. */
   bearingDeg?: number;
-  /** 사용자→몬스터 거리(m). 없으면 8m 가정 (원근 스케일링용). */
+  /** 사용자→몬스터 거리(m). 스케일에만 영향. */
   distanceM?: number;
-  /** 디바이스 나침반 방위 (0~360°). null이면 fallback (몬스터 화면 정면 고정). */
+  /** 디바이스 나침반 방위. null이면 정면 가정. */
   compassHeading?: number | null;
 }
 
@@ -45,40 +47,66 @@ const RARITY_COLOR: Record<MonsterRarity, number> = {
   rare: 0x60a5fa,
   legendary: 0xfbbf24,
 };
-
 const RARITY_EMISSIVE: Record<MonsterRarity, number> = {
   common: 0x224422,
   rare: 0x14283f,
   legendary: 0x4a3408,
 };
+const RARITY_PARTICLE: Record<MonsterRarity, number> = {
+  common: 0xa7f3d0,
+  rare: 0xa5b4fc,
+  legendary: 0xfde68a,
+};
 
-const HORIZONTAL_FOV_DEG = 60;
-// 화면 폭 절반에 해당하는 월드 x 거리는 distance * tan(HFOV/2).
+// 렌더 깊이 — 모든 몬스터는 시각적으로 이 거리에 있는 것처럼 그린다.
+const RENDER_DEPTH = 3.2;
 
-function makeMonsterMesh(rarity: MonsterRarity): {
+// 거리(m) → 시각 스케일. 가까울수록 크게, 멀어도 인지할 수 있는 최소 크기 유지.
+function distanceToScale(distM: number): number {
+  // 5m 미만은 거의 같은 크기로, 100m+는 작아지되 0.6 미만으로 내려가지 않게.
+  const s = 2.0 * Math.pow(10 / Math.max(5, distM), 0.45);
+  return Math.max(0.6, Math.min(2.4, s));
+}
+
+// 시야각(도) — 카메라 FOV 와 매치
+const HFOV_DEG = 65;
+// 정중앙 ±이 각도 안쪽이면 100% noticed. 그 밖은 점점 숨김.
+const NOTICE_FULL_DEG = 12;
+const NOTICE_FADE_DEG = 28;
+
+function aimScoreFromDelta(absDeltaDeg: number): number {
+  if (absDeltaDeg <= NOTICE_FULL_DEG) return 1;
+  if (absDeltaDeg >= NOTICE_FADE_DEG) return 0;
+  return 1 - (absDeltaDeg - NOTICE_FULL_DEG) / (NOTICE_FADE_DEG - NOTICE_FULL_DEG);
+}
+
+interface MonsterBundle {
   group: THREE.Group;
   bodyMat: THREE.MeshStandardMaterial;
+  shadowMat: THREE.MeshBasicMaterial;
+  eyeMatL: THREE.MeshBasicMaterial;
+  eyeMatR: THREE.MeshBasicMaterial;
   haloMat?: THREE.MeshBasicMaterial;
-} {
-  const group = new THREE.Group();
+}
 
+function makeMonsterMesh(rarity: MonsterRarity): MonsterBundle {
+  const group = new THREE.Group();
   const color = RARITY_COLOR[rarity];
   const emissive = RARITY_EMISSIVE[rarity];
 
   let bodyGeom: THREE.BufferGeometry;
-  if (rarity === "legendary") {
-    bodyGeom = new THREE.IcosahedronGeometry(0.55, 1);
-  } else if (rarity === "rare") {
-    bodyGeom = new THREE.OctahedronGeometry(0.55, 1);
-  } else {
-    bodyGeom = new THREE.SphereGeometry(0.5, 28, 22);
-  }
+  if (rarity === "legendary") bodyGeom = new THREE.IcosahedronGeometry(0.55, 1);
+  else if (rarity === "rare") bodyGeom = new THREE.OctahedronGeometry(0.55, 1);
+  else bodyGeom = new THREE.SphereGeometry(0.5, 32, 24);
+
   const bodyMat = new THREE.MeshStandardMaterial({
     color,
     emissive,
-    emissiveIntensity: 0.45,
-    roughness: 0.45,
+    emissiveIntensity: 0.5,
+    roughness: 0.4,
     metalness: 0.15,
+    transparent: true,
+    opacity: 1,
     flatShading: rarity !== "common",
   });
   const body = new THREE.Mesh(bodyGeom, bodyMat);
@@ -86,24 +114,23 @@ function makeMonsterMesh(rarity: MonsterRarity): {
   group.add(body);
 
   // 눈
-  const eyeGeom = new THREE.SphereGeometry(0.08, 12, 12);
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-  const eyeL = new THREE.Mesh(eyeGeom, eyeMat);
-  const eyeR = new THREE.Mesh(eyeGeom, eyeMat);
+  const eyeMatL = new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 1 });
+  const eyeMatR = new THREE.MeshBasicMaterial({ color: 0x111111, transparent: true, opacity: 1 });
+  const eyeGeom = new THREE.SphereGeometry(0.085, 14, 14);
+  const eyeL = new THREE.Mesh(eyeGeom, eyeMatL);
+  const eyeR = new THREE.Mesh(eyeGeom, eyeMatR);
   eyeL.position.set(-0.18, 0.12, 0.46);
   eyeR.position.set(0.18, 0.12, 0.46);
   group.add(eyeL);
   group.add(eyeR);
 
-  // 바닥 그림자 disc — 몬스터 아래 살짝 떠있는 듯한 느낌
-  const shadow = new THREE.Mesh(
-    new THREE.CircleGeometry(0.55, 32),
-    new THREE.MeshBasicMaterial({
-      color: 0x000000,
-      transparent: true,
-      opacity: 0.35,
-    }),
-  );
+  // 그림자
+  const shadowMat = new THREE.MeshBasicMaterial({
+    color: 0x000000,
+    transparent: true,
+    opacity: 0.42,
+  });
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.6, 36), shadowMat);
   shadow.rotation.x = -Math.PI / 2;
   shadow.position.y = -0.55;
   shadow.name = "shadow";
@@ -116,33 +143,33 @@ function makeMonsterMesh(rarity: MonsterRarity): {
       transparent: true,
       opacity: 0.7,
     });
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.045, 12, 56), haloMat);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.05, 14, 64), haloMat);
     ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.7;
+    ring.position.y = 0.75;
     ring.name = "halo";
     group.add(ring);
   }
 
-  return { group, bodyMat, haloMat };
+  return { group, bodyMat, shadowMat, eyeMatL, eyeMatR, haloMat };
 }
 
-// 파티클 시스템 — 명중 시 색·크기 다르게 spawn
-function makeParticles(): {
+interface ParticleSystem {
   points: THREE.Points;
   positions: Float32Array;
   velocities: Float32Array;
   ages: Float32Array;
   capacity: number;
   material: THREE.PointsMaterial;
-} {
-  const capacity = 120;
+}
+
+function makeParticles(capacity: number, size: number): ParticleSystem {
   const positions = new Float32Array(capacity * 3);
   const velocities = new Float32Array(capacity * 3);
-  const ages = new Float32Array(capacity); // 0=dead, >0=remaining seconds
+  const ages = new Float32Array(capacity);
   const geom = new THREE.BufferGeometry();
   geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   const material = new THREE.PointsMaterial({
-    size: 0.08,
+    size,
     color: 0xffffff,
     transparent: true,
     opacity: 1,
@@ -166,49 +193,48 @@ export function MonsterArScene({
   compassHeading,
 }: MonsterArSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+
   const orientationRef = useRef(orientation);
   orientationRef.current = orientation;
   const compassRef = useRef<number | null>(compassHeading ?? null);
   compassRef.current = compassHeading ?? null;
   const bearingRef = useRef<number | undefined>(monsterBearing);
   bearingRef.current = monsterBearing;
-  const distanceRef = useRef<number>(distanceM ?? 8);
-  distanceRef.current = distanceM ?? 8;
+  const distanceRef = useRef<number>(distanceM ?? 10);
+  distanceRef.current = distanceM ?? 10;
   const hitsRef = useRef(hits);
   hitsRef.current = hits;
   const requiredRef = useRef(hitsRequired);
   requiredRef.current = hitsRequired;
 
-  const sceneStateRef = useRef<{
+  const stateRef = useRef<{
     renderer: THREE.WebGLRenderer;
     scene: THREE.Scene;
     camera: THREE.PerspectiveCamera;
-    monster: THREE.Group;
-    bodyMat: THREE.MeshStandardMaterial;
-    haloMat?: THREE.MeshBasicMaterial;
-    particles: ReturnType<typeof makeParticles>;
+    bundle: MonsterBundle;
+    burst: ParticleSystem;
+    aura: ParticleSystem;
     raycaster: THREE.Raycaster;
     rafId: number;
     clock: THREE.Clock;
     spawnTime: number;
-    // 몬스터의 월드 위치 anchor (사용자가 정면을 향한 시점 기준).
-    anchorAngleRad: number; // 0=정면, +=오른쪽, −=왼쪽 (compass 가 없을 때만 사용)
-    // hit reaction state
+    // 발견 상태
+    aimScore: number; // 0..1 부드러운 보간
+    discoveredAt: number; // 처음 noticed 된 시각 (애니메이션용)
+    // hit 효과
     flashUntilMs: number;
+    shakeUntilMs: number;
     knockbackUntilMs: number;
     knockbackVec: THREE.Vector3;
-    shakeUntilMs: number;
-    // escape dart state
+    // 회피
     escapeUntilMs: number;
     escapeOffset: THREE.Vector3;
     nextEscapeAtMs: number;
-    // capture/final state
+    // 결정타
     finishing: boolean;
     finishStartMs: number;
-    onCompleteFade: (() => void) | null;
   } | null>(null);
 
-  // ── mount once ───────────────────────────────────────────────
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -227,54 +253,53 @@ export function MonsterArScene({
 
     const scene = new THREE.Scene();
 
-    const camera = new THREE.PerspectiveCamera(HORIZONTAL_FOV_DEG, width / height, 0.1, 60);
-    // 카메라 위치는 (0,1.5,0) 인간 눈높이 가정. 몬스터는 거리에 따라 z 음수 방향에 배치.
-    camera.position.set(0, 1.5, 0);
+    const camera = new THREE.PerspectiveCamera(HFOV_DEG, width / height, 0.1, 50);
+    camera.position.set(0, 0, 0);
 
-    // 조명
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    const sun = new THREE.DirectionalLight(0xfff4e0, 0.85);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const sun = new THREE.DirectionalLight(0xfff4e0, 0.95);
     sun.position.set(2, 4, 2);
     scene.add(sun);
-    const rim = new THREE.DirectionalLight(0x9ca3ff, 0.4);
+    const rim = new THREE.DirectionalLight(0xa5b4fc, 0.45);
     rim.position.set(-3, -1, -2);
     scene.add(rim);
 
-    const { group: monster, bodyMat, haloMat } = makeMonsterMesh(rarity);
-    scene.add(monster);
+    const bundle = makeMonsterMesh(rarity);
+    scene.add(bundle.group);
 
-    const particles = makeParticles();
-    scene.add(particles.points);
+    // burst 큰 입자, aura 작은 입자가 항상 떠다님
+    const burst = makeParticles(140, 0.09);
+    const aura = makeParticles(40, 0.045);
+    aura.material.color.setHex(RARITY_PARTICLE[rarity]);
+    aura.material.opacity = 0.85;
+    scene.add(burst.points);
+    scene.add(aura.points);
 
     const raycaster = new THREE.Raycaster();
     const clock = new THREE.Clock();
 
-    const initialDistance = distanceRef.current;
-    monster.position.set(0, 1.2, -initialDistance);
-
-    sceneStateRef.current = {
+    stateRef.current = {
       renderer,
       scene,
       camera,
-      monster,
-      bodyMat,
-      haloMat,
-      particles,
+      bundle,
+      burst,
+      aura,
       raycaster,
       rafId: 0,
       clock,
       spawnTime: performance.now(),
-      anchorAngleRad: 0,
+      aimScore: 0,
+      discoveredAt: 0,
       flashUntilMs: 0,
+      shakeUntilMs: 0,
       knockbackUntilMs: 0,
       knockbackVec: new THREE.Vector3(),
-      shakeUntilMs: 0,
       escapeUntilMs: 0,
       escapeOffset: new THREE.Vector3(),
-      nextEscapeAtMs: performance.now() + 4000 + Math.random() * 3000,
+      nextEscapeAtMs: performance.now() + 7000 + Math.random() * 4000,
       finishing: false,
       finishStartMs: 0,
-      onCompleteFade: null,
     };
 
     const ro = new ResizeObserver(() => {
@@ -286,36 +311,58 @@ export function MonsterArScene({
     });
     ro.observe(container);
 
-    function emitParticles(count: number, color: number, speed = 1.2) {
-      const st = sceneStateRef.current;
+    // ── particle emit helpers ─────────────────────────────────
+    function emitBurst(count: number, color: number, speed: number) {
+      const st = stateRef.current;
       if (!st) return;
-      const p = st.particles;
+      const p = st.burst;
       let emitted = 0;
       for (let i = 0; i < p.capacity && emitted < count; i++) {
         if (p.ages[i] > 0) continue;
-        const px = st.monster.position.x;
-        const py = st.monster.position.y;
-        const pz = st.monster.position.z;
-        p.positions[i * 3] = px;
-        p.positions[i * 3 + 1] = py;
-        p.positions[i * 3 + 2] = pz;
-        // 구면 분포로 속도
+        p.positions[i * 3] = st.bundle.group.position.x;
+        p.positions[i * 3 + 1] = st.bundle.group.position.y;
+        p.positions[i * 3 + 2] = st.bundle.group.position.z;
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
-        const s = speed * (0.6 + Math.random() * 0.8);
+        const s = speed * (0.6 + Math.random() * 0.9);
         p.velocities[i * 3] = Math.sin(phi) * Math.cos(theta) * s;
-        p.velocities[i * 3 + 1] = Math.cos(phi) * s + 0.5; // 위쪽 보정
+        p.velocities[i * 3 + 1] = Math.cos(phi) * s + 0.5;
         p.velocities[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * s;
-        p.ages[i] = 0.6 + Math.random() * 0.5;
+        p.ages[i] = 0.55 + Math.random() * 0.5;
         emitted++;
       }
       p.material.color.setHex(color);
       (p.points.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
     }
-    (sceneStateRef.current as unknown as { _emit?: typeof emitParticles })._emit = emitParticles;
+
+    function emitAuraOne(t: number) {
+      const st = stateRef.current;
+      if (!st) return;
+      const p = st.aura;
+      for (let i = 0; i < p.capacity; i++) {
+        if (p.ages[i] > 0) continue;
+        // 몬스터 주위 구면 반경 0.7~1.1 에서 부유
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const r = 0.7 + Math.random() * 0.4;
+        p.positions[i * 3] = st.bundle.group.position.x + Math.sin(phi) * Math.cos(theta) * r;
+        p.positions[i * 3 + 1] =
+          st.bundle.group.position.y + Math.cos(phi) * r * 0.7 + Math.sin(t * 2) * 0.05;
+        p.positions[i * 3 + 2] = st.bundle.group.position.z + Math.sin(phi) * Math.sin(theta) * r;
+        // 천천히 위로 떠오름
+        p.velocities[i * 3] = (Math.random() - 0.5) * 0.05;
+        p.velocities[i * 3 + 1] = 0.15 + Math.random() * 0.1;
+        p.velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.05;
+        p.ages[i] = 0.8 + Math.random() * 0.6;
+        break;
+      }
+    }
+
+    let lastAuraEmit = 0;
+    let prevNotice = false;
 
     const animate = () => {
-      const st = sceneStateRef.current;
+      const st = stateRef.current;
       if (!st) return;
       st.rafId = requestAnimationFrame(animate);
 
@@ -323,32 +370,46 @@ export function MonsterArScene({
       const t = (now - st.spawnTime) / 1000;
       const dt = Math.min(0.05, st.clock.getDelta());
 
-      // ── 카메라 회전 & 몬스터 위치 ─────────────────────────────
-      // compass 가 있으면: 몬스터를 월드 방위에 anchoring → 카메라 (heading) 회전에 따라
-      // 자연스럽게 시야에서 좌우로 이동.
+      // ── aimScore 계산 ───────────────────────────────────────
       const compass = compassRef.current;
       const bearing = bearingRef.current;
-      const dist = distanceRef.current;
-
-      let angleFromCenterRad = 0;
+      let rawAimScore = 0.5; // compass 없으면 중간값 (항상 약간 보이게)
+      let lateralRad = 0;
       if (typeof compass === "number" && typeof bearing === "number") {
-        const delta = bearingDelta(compass, bearing); // -180..180 deg
-        angleFromCenterRad = (delta * Math.PI) / 180;
+        const delta = bearingDelta(compass, bearing);
+        const absDelta = Math.abs(delta);
+        rawAimScore = aimScoreFromDelta(absDelta);
+        // 화면에서의 좌우 시차: ±NOTICE_FADE_DEG 사이를 ±0.6 정도 좌우 이동으로 매핑
+        const screenAngleDeg = Math.max(-NOTICE_FADE_DEG, Math.min(NOTICE_FADE_DEG, delta));
+        lateralRad = (screenAngleDeg * Math.PI) / 180;
       } else {
-        // fallback: orientation.x 픽셀 오프셋을 라디안 추정으로 반전 적용해 미세 시차.
-        angleFromCenterRad = (orientationRef.current.x / 600) * Math.PI;
+        // compass 없으면 자이로 시차만 미세 적용
+        lateralRad = (orientationRef.current.x / 1200) * Math.PI;
       }
+      // aimScore 부드럽게 (5fps 정도로 변화)
+      st.aimScore += (rawAimScore - st.aimScore) * Math.min(1, dt * 6);
 
-      // 몬스터 월드 위치 = 카메라 정면(z 음수) + 좌우 회전.
-      // 시야각(60°) 안에서 자연스럽게 들어왔다 나갔다. 시야 밖이면 안 그려도 되지만,
-      // three.js frustum culling 자동 처리.
-      const baseX = Math.sin(angleFromCenterRad) * dist;
-      const baseZ = -Math.cos(angleFromCenterRad) * dist;
+      const noticed = st.aimScore >= 0.55;
+      if (noticed && !prevNotice && !st.finishing) {
+        // 처음 발견 — notice 효과
+        st.discoveredAt = now;
+        emitBurst(20, RARITY_PARTICLE[rarity], 1.2);
+        // 짧고 부드러운 발견 톤
+        fx.hit();
+      }
+      prevNotice = noticed;
 
-      // hover bob
-      const hoverY = 1.2 + Math.sin(t * 2.2) * 0.08;
+      // ── 몬스터 위치 (렌더 깊이는 고정) ─────────────────────
+      const baseX = Math.sin(lateralRad) * RENDER_DEPTH;
+      const baseZ = -Math.cos(lateralRad) * RENDER_DEPTH;
 
-      // knockback (밀려남)
+      // 호버
+      const hoverY = 0 + Math.sin(t * 2.0) * 0.07;
+
+      // 숨김 상태에선 약간 아래로 가라앉음 (peek-a-boo)
+      const hideDip = (1 - st.aimScore) * -0.35;
+
+      // 넉백
       let kx = 0,
         ky = 0,
         kz = 0;
@@ -359,7 +420,7 @@ export function MonsterArScene({
         kz = st.knockbackVec.z * k;
       }
 
-      // escape dart (살짝 옆으로 휙)
+      // 회피 dart — noticed 상태에서, 첫 hit 이후
       if (now < st.escapeUntilMs) {
         const k = (st.escapeUntilMs - now) / 600;
         const ease = 1 - (1 - k) * (1 - k);
@@ -368,112 +429,136 @@ export function MonsterArScene({
       } else if (
         now >= st.nextEscapeAtMs &&
         !st.finishing &&
+        noticed &&
         hitsRef.current > 0 &&
         hitsRef.current < requiredRef.current
       ) {
-        // 한 번 hit 받은 뒤 가끔 도망
         st.escapeUntilMs = now + 600;
         st.escapeOffset.set(
-          (Math.random() - 0.5) * 1.6,
+          (Math.random() - 0.5) * 1.4,
           (Math.random() - 0.2) * 0.4,
           0,
         );
-        st.nextEscapeAtMs = now + 5000 + Math.random() * 4000;
+        st.nextEscapeAtMs = now + 5000 + Math.random() * 5000;
       }
 
-      st.monster.position.set(baseX + kx, hoverY + ky, baseZ + kz);
+      st.bundle.group.position.set(baseX + kx, hoverY + hideDip + ky, baseZ + kz);
 
-      // idle 회전 — 항상 정면을 바라보도록 시점 보정
-      st.monster.lookAt(st.camera.position.x, st.monster.position.y + 0.2, st.camera.position.z);
-      // 그 위에 살짝 자기축 회전 추가 (visual interest)
-      st.monster.rotateY(t * 0.4);
+      // 카메라를 향해 lookAt + 약간의 idle 회전 (noticed 일 때만 자기축 빠른 회전)
+      st.bundle.group.lookAt(st.camera.position.x, st.bundle.group.position.y + 0.15, st.camera.position.z);
+      st.bundle.group.rotateY(t * (noticed ? 0.7 : 0.2));
 
-      // 거리 기반 스케일 — 가까우면 크고 멀면 작음. 기본 거리 8m 기준.
-      const baseScale = 1.0 * (8 / Math.max(3, dist));
-      // hit punch — 명중 직후 잠깐 부풀어 오름
+      // ── 스케일: 실제 거리 + aimScore + hit punch + finish shrink ──
+      const distScale = distanceToScale(distanceRef.current);
+      const visibility = 0.45 + st.aimScore * 0.55; // 0.45 (숨김) ~ 1.0 (등장)
+
       const sincePunch = Math.max(0, 1 - (now - st.flashUntilMs + 180) / 180);
-      const punchScale = 1 + sincePunch * 0.18;
-      // 남은 hits 줄어들수록 약간 작아짐 (시각 progress)
-      const progressShrink = 1 - 0.15 * (hitsRef.current / Math.max(1, requiredRef.current));
+      const punch = 1 + sincePunch * 0.22;
+      const progressShrink = 1 - 0.12 * (hitsRef.current / Math.max(1, requiredRef.current));
 
-      let scale = baseScale * punchScale * progressShrink;
+      let scale = distScale * visibility * punch * progressShrink;
       if (st.finishing) {
-        // 결정타 후 spin & shrink
         const dur = (now - st.finishStartMs) / 1000;
-        scale *= Math.max(0.05, 1 - dur * 1.4);
-        st.monster.rotateY(dur * 6);
-        if (dur > 0.7 && st.onCompleteFade) {
-          st.monster.visible = false;
-          st.onCompleteFade();
-          st.onCompleteFade = null;
-        }
+        scale *= Math.max(0.04, 1 - dur * 1.4);
+        st.bundle.group.rotateY(dur * 7);
+        if (dur > 0.7) st.bundle.group.visible = false;
       }
-      st.monster.scale.setScalar(scale);
+      st.bundle.group.scale.setScalar(scale);
 
-      // body material flash
+      // ── 시각 properties: opacity / emissive ────────────────
+      // 숨김 → 반투명 + 어두움. 등장 → 풀 컬러 + 강한 발광.
+      const opacity = 0.25 + st.aimScore * 0.75;
+      st.bundle.bodyMat.opacity = opacity;
+      st.bundle.eyeMatL.opacity = opacity;
+      st.bundle.eyeMatR.opacity = opacity;
+      st.bundle.shadowMat.opacity = 0.18 + st.aimScore * 0.3;
+      if (st.bundle.haloMat) st.bundle.haloMat.opacity = 0.2 + st.aimScore * 0.55;
+
+      const baseEmissive = 0.4 + st.aimScore * 0.5;
       if (now < st.flashUntilMs) {
         const k = (st.flashUntilMs - now) / 180;
-        st.bodyMat.emissiveIntensity = 0.45 + k * 1.5;
+        st.bundle.bodyMat.emissiveIntensity = baseEmissive + k * 1.6;
       } else {
-        st.bodyMat.emissiveIntensity = 0.45;
+        st.bundle.bodyMat.emissiveIntensity = baseEmissive;
       }
 
-      // legendary halo rotation
-      if (st.haloMat) {
-        const halo = st.monster.getObjectByName("halo");
-        if (halo) halo.rotation.z = t * 1.4;
+      // halo 회전
+      if (st.bundle.haloMat) {
+        const halo = st.bundle.group.getObjectByName("halo");
+        if (halo) halo.rotation.z = t * 1.5;
       }
 
-      // ── 카메라 셰이크 ────────────────────────────────────────
+      // ── 카메라 셰이크 ───────────────────────────────────────
       let camOffsetX = 0,
         camOffsetY = 0;
       if (now < st.shakeUntilMs) {
         const k = (st.shakeUntilMs - now) / 220;
-        camOffsetX = (Math.random() - 0.5) * 0.06 * k;
-        camOffsetY = (Math.random() - 0.5) * 0.06 * k;
+        camOffsetX = (Math.random() - 0.5) * 0.08 * k;
+        camOffsetY = (Math.random() - 0.5) * 0.08 * k;
       }
-      // 디바이스 픽셀 기울기도 살짝 카메라에 미세 반영 (배경 패럴랙스)
       const tiltX = orientationRef.current.x / 1200;
       const tiltY = orientationRef.current.y / 1400;
-      st.camera.position.set(0 + camOffsetX, 1.5 + camOffsetY, 0);
-      st.camera.rotation.set(tiltY, tiltX, 0);
+      st.camera.position.set(camOffsetX, camOffsetY, 0);
+      st.camera.rotation.set(tiltY * 0.15, tiltX * 0.15, 0);
 
-      // ── 파티클 업데이트 ──────────────────────────────────────
-      const p = st.particles;
-      const pos = p.positions;
-      const vel = p.velocities;
-      let anyAlive = false;
-      for (let i = 0; i < p.capacity; i++) {
-        if (p.ages[i] <= 0) continue;
-        anyAlive = true;
-        p.ages[i] -= dt;
-        // 중력 + 마찰
-        vel[i * 3 + 1] -= 4.5 * dt;
-        vel[i * 3] *= 0.96;
-        vel[i * 3 + 2] *= 0.96;
-        pos[i * 3] += vel[i * 3] * dt;
-        pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
-        pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
-        if (p.ages[i] <= 0) {
-          pos[i * 3] = 0;
-          pos[i * 3 + 1] = -1000;
-          pos[i * 3 + 2] = 0;
+      // ── 파티클 업데이트 ─────────────────────────────────────
+      // burst
+      let burstAlive = false;
+      const bp = st.burst;
+      for (let i = 0; i < bp.capacity; i++) {
+        if (bp.ages[i] <= 0) continue;
+        burstAlive = true;
+        bp.ages[i] -= dt;
+        bp.velocities[i * 3 + 1] -= 4.5 * dt;
+        bp.velocities[i * 3] *= 0.96;
+        bp.velocities[i * 3 + 2] *= 0.96;
+        bp.positions[i * 3] += bp.velocities[i * 3] * dt;
+        bp.positions[i * 3 + 1] += bp.velocities[i * 3 + 1] * dt;
+        bp.positions[i * 3 + 2] += bp.velocities[i * 3 + 2] * dt;
+        if (bp.ages[i] <= 0) {
+          bp.positions[i * 3 + 1] = -1000;
         }
       }
-      if (anyAlive) {
-        (p.points.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-        const oldestAge = Math.max(...Array.from(p.ages));
-        p.material.opacity = Math.min(1, oldestAge / 0.6);
+      if (burstAlive) {
+        (bp.points.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+        bp.material.opacity = 1;
       } else {
-        p.material.opacity = 0;
+        bp.material.opacity = 0;
+      }
+
+      // aura: 등장 시 자주, 숨김 시 띄엄띄엄 emit
+      const auraInterval = noticed ? 0.05 : 0.25;
+      if (now - lastAuraEmit > auraInterval * 1000) {
+        emitAuraOne(t);
+        lastAuraEmit = now;
+      }
+      const ap = st.aura;
+      let auraAlive = false;
+      for (let i = 0; i < ap.capacity; i++) {
+        if (ap.ages[i] <= 0) continue;
+        auraAlive = true;
+        ap.ages[i] -= dt;
+        ap.positions[i * 3] += ap.velocities[i * 3] * dt;
+        ap.positions[i * 3 + 1] += ap.velocities[i * 3 + 1] * dt;
+        ap.positions[i * 3 + 2] += ap.velocities[i * 3 + 2] * dt;
+        if (ap.ages[i] <= 0) ap.positions[i * 3 + 1] = -1000;
+      }
+      if (auraAlive) {
+        (ap.points.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+        // 숨김일수록 약간 진하게 (위치 hint), 등장이면 부드럽게
+        ap.material.opacity = noticed ? 0.55 : 0.85;
+      } else {
+        ap.material.opacity = 0;
       }
 
       st.renderer.render(st.scene, st.camera);
     };
     animate();
 
+    (stateRef.current as unknown as { _emitBurst?: typeof emitBurst })._emitBurst = emitBurst;
+
     return () => {
-      const st = sceneStateRef.current;
+      const st = stateRef.current;
       if (st) {
         cancelAnimationFrame(st.rafId);
         st.renderer.dispose();
@@ -484,34 +569,31 @@ export function MonsterArScene({
         }
       }
       ro.disconnect();
-      sceneStateRef.current = null;
+      stateRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rarity]);
 
-  // ── hits 변화 감지 → impact reaction ─────────────────────────
+  // ── 명중 reaction ────────────────────────────────────────────
   const lastHitsRef = useRef(0);
   useEffect(() => {
-    const st = sceneStateRef.current;
+    const st = stateRef.current;
     if (!st) return;
     if (hits > lastHitsRef.current) {
       const now = performance.now();
-      // flash + shake + knockback + particles + audio + haptic
       st.flashUntilMs = now + 180;
       st.shakeUntilMs = now + 220;
-      // 카메라 방향 반대로 살짝 밀려남
-      const angle = Math.atan2(st.monster.position.x, -st.monster.position.z);
-      st.knockbackVec.set(Math.sin(angle) * 0.6, 0.2, -Math.cos(angle) * 0.6);
+      const angle = Math.atan2(st.bundle.group.position.x, -st.bundle.group.position.z);
+      st.knockbackVec.set(Math.sin(angle) * 0.7, 0.25, -Math.cos(angle) * 0.7);
       st.knockbackUntilMs = now + 220;
-      const color =
-        rarity === "legendary" ? 0xfde68a : rarity === "rare" ? 0xa5b4fc : 0xa7f3d0;
-      const emit = (st as unknown as { _emit?: (n: number, c: number, s?: number) => void })._emit;
-      emit?.(28, color, 1.4);
+      const color = RARITY_PARTICLE[rarity];
+      const emit = (st as unknown as { _emitBurst?: (n: number, c: number, s: number) => void })
+        ._emitBurst;
+      emit?.(32, color, 1.6);
       if (hits >= hitsRequired) {
-        // 결정타
         st.finishing = true;
         st.finishStartMs = now;
-        emit?.(80, 0xffffff, 2.4);
+        emit?.(100, 0xffffff, 2.6);
         fx.finish();
       } else {
         fx.hit();
@@ -520,22 +602,25 @@ export function MonsterArScene({
     lastHitsRef.current = hits;
   }, [hits, hitsRequired, rarity]);
 
-  // ── 화면 탭 → raycast → onAim ─────────────────────────────────
+  // ── 탭 → raycast ─────────────────────────────────────────────
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    const st = sceneStateRef.current;
+    const st = stateRef.current;
     const container = containerRef.current;
     if (!st || !container) return;
     if (st.finishing) return;
+    // 숨김 상태에선 raycaster hit 도 부정확 — aimScore 가 낮으면 hit 처리 거부.
+    if (st.aimScore < 0.5) {
+      fx.miss();
+      onAim(false, e.clientX, e.clientY);
+      return;
+    }
     const rect = container.getBoundingClientRect();
     const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
     st.raycaster.setFromCamera(new THREE.Vector2(nx, ny), st.camera);
-    const intersects = st.raycaster.intersectObject(st.monster, true);
+    const intersects = st.raycaster.intersectObject(st.bundle.group, true);
     const hit = intersects.length > 0;
-    if (!hit) {
-      // 빗나감 — 짧은 톤 + 작은 ripple 파티클을 탭한 화면 지점에서
-      fx.miss();
-    }
+    if (!hit) fx.miss();
     onAim(hit, e.clientX, e.clientY);
   };
 
