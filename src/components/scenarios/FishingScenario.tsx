@@ -367,7 +367,51 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
           ? "🐟 AI 생성 물고기 모델 적용됨"
           : "* AI 생성 물고기는 admin/asset-forge 에서 만들면 자동 적용"}
       </p>
+
+      {/* Dev 디버그 — VITE_DEBUG_FISHING=1 일 때만 phase 강제 전환 버튼 노출 */}
+      <FishingDebugButtons session={session} />
     </ScenarioCameraShell>
+  );
+}
+
+function FishingDebugButtons({
+  session,
+}: {
+  session: ReturnType<typeof useFishingSession>;
+}) {
+  const enabled = (import.meta as { env?: Record<string, string> }).env?.VITE_DEBUG_FISHING === "1";
+  if (!enabled) return null;
+  const btn = (label: string, onPress: () => void) => (
+    <button
+      key={label}
+      type="button"
+      onClick={onPress}
+      className="rounded-md bg-fuchsia-600/85 px-2 py-1 text-[10px] font-bold text-white shadow active:scale-95"
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="pointer-events-auto absolute right-2 top-24 z-40 flex flex-col gap-1">
+      <p className="text-[9px] text-white/70">DEV</p>
+      {btn("ready", () => session.reset())}
+      {btn("→ casting", () => session.startCasting())}
+      {btn("→ floating", () => {
+        session.startCasting();
+        setTimeout(() => session.releaseCast(), 50);
+      })}
+      {btn("bite!", () => {
+        // 강제로 bite 트리거 — startCasting + release 후 즉시 jiggle 반복
+        session.startCasting();
+        setTimeout(() => session.releaseCast(), 30);
+        setTimeout(() => {
+          for (let i = 0; i < 3; i++) setTimeout(() => session.jiggle(), i * 80);
+        }, 700);
+      })}
+      {btn("hook → fight", () => session.hookFish())}
+      {btn("force tighten", () => session.tighten())}
+      {btn("force loosen", () => session.loosen())}
+    </div>
   );
 }
 

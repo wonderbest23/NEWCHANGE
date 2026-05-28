@@ -85,6 +85,38 @@ export const fx = {
     beep({ freq: 500, endFreq: 1400, durationMs: 350, type: "triangle", gain: 0.18 });
     vibrate([20, 40, 20, 40, 20]);
   },
+  // ── 낚시 전용 ─────────────────────────────────────────────
+  /** 입질 — 짧고 깊은 두 톤 + 가벼운 burst 진동 */
+  fishingBite() {
+    beep({ freq: 320, endFreq: 220, durationMs: 110, type: "sine", gain: 0.13 });
+    setTimeout(
+      () =>
+        beep({ freq: 420, endFreq: 320, durationMs: 90, type: "triangle", gain: 0.12 }),
+      120,
+    );
+    vibrate([30, 20, 60]);
+  },
+  /** 잡힘 — 환호 톤 + 길게 두근 진동 */
+  fishingCatch() {
+    beep({ freq: 700, endFreq: 1200, durationMs: 220, type: "triangle", gain: 0.18 });
+    setTimeout(
+      () =>
+        beep({
+          freq: 1400,
+          endFreq: 1700,
+          durationMs: 280,
+          type: "triangle",
+          gain: 0.16,
+        }),
+      130,
+    );
+    vibrate([50, 30, 80]);
+  },
+  /** 놓침 — 낮고 무딘 톤 + 한 번 진동 */
+  fishingEscape() {
+    beep({ freq: 220, endFreq: 110, durationMs: 220, type: "sine", gain: 0.1 });
+    vibrate(40);
+  },
 };
 
 function vibrate(pattern: number | number[]): void {
