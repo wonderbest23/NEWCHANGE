@@ -28,3 +28,36 @@ export function offsetMeters(
   const distanceM = haversineM(userLat, userLng, targetLat, targetLng);
   return { eastM, northM, distanceM };
 }
+
+/**
+ * 사용자 위치에서 타겟 좌표를 바라보는 방위각.
+ * 결과: 정북(N)=0°, 동(E)=90°, 남(S)=180°, 서(W)=270°.
+ *
+ * 짧은 거리에서는 equirectangular 근사로 충분 (대권 vs 직선 차이 무시).
+ */
+export function bearingDeg(
+  userLat: number,
+  userLng: number,
+  targetLat: number,
+  targetLng: number,
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const φ1 = toRad(userLat);
+  const φ2 = toRad(targetLat);
+  const Δλ = toRad(targetLng - userLng);
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x =
+    Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+  const θ = Math.atan2(y, x);
+  return (θ * 180) / Math.PI < 0
+    ? ((θ * 180) / Math.PI + 360)
+    : (θ * 180) / Math.PI;
+}
+
+/** 두 방위각 사이의 시계/반시계 최소 각도 차 (−180 ~ 180). */
+export function bearingDelta(currentDeg: number, targetDeg: number): number {
+  let delta = targetDeg - currentDeg;
+  while (delta > 180) delta -= 360;
+  while (delta < -180) delta += 360;
+  return delta;
+}

@@ -42,6 +42,8 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
   const lastPosRef = useRef<{ lat: number; lng: number; t: number } | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const pendingSyncRef = useRef(false);
+  // 최근 4개 GPS 샘플의 moving average buffer. 한자리 GPS 떨림 억제용.
+  const gpsBufferRef = useRef<Array<{ lat: number; lng: number }>>([]);
 
   useEffect(() => {
     void supabase.auth.getUser().then(({ data }) => {
@@ -89,23 +91,35 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
   const handlePosition = useCallback(
     (pos: GeolocationPosition) => {
       const { latitude, longitude, accuracy } = pos.coords;
-      setUserPos({ lat: latitude, lng: longitude });
+
+      // GPS 정확도가 30m 이상이면 표시·서버 모두 무시 (PDF 가이드).
+      if (typeof accuracy === "number" && accuracy > 30) return;
+
+      // moving average: 최근 4개 raw GPS 의 평균을 표시·서버 모두에 사용.
+      // 작은 흔들림에 의한 몬스터 떨림을 줄임.
+      const buf = gpsBufferRef.current;
+      buf.push({ lat: latitude, lng: longitude });
+      if (buf.length > 4) buf.shift();
+      const avgLat = buf.reduce((s, p) => s + p.lat, 0) / buf.length;
+      const avgLng = buf.reduce((s, p) => s + p.lng, 0) / buf.length;
+
+      setUserPos({ lat: avgLat, lng: avgLng });
       const now = Date.now();
       let deltaM = 0;
       const prev = lastPosRef.current;
       if (prev) {
-        deltaM = haversineM(prev.lat, prev.lng, latitude, longitude);
+        deltaM = haversineM(prev.lat, prev.lng, avgLat, avgLng);
         const dt = (now - prev.t) / 1000;
         if (dt > 0 && deltaM / dt > 12) return;
         if (deltaM < 2) return;
       }
-      lastPosRef.current = { lat: latitude, lng: longitude, t: now };
+      lastPosRef.current = { lat: avgLat, lng: avgLng, t: now };
       if (pendingSyncRef.current || deltaM < 2) return;
       pendingSyncRef.current = true;
       syncMut.mutate(
         {
-          latitude,
-          longitude,
+          latitude: avgLat,
+          longitude: avgLng,
           accuracy_m: accuracy ?? null,
           client_delta_m: Math.round(deltaM),
         },

@@ -37,7 +37,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { useDeviceOrientation } from "@/hooks/useDeviceOrientation";
-import { CATCH_RADIUS_M, haversineM } from "@/lib/game/geo";
+import { bearingDeg, bearingDelta, CATCH_RADIUS_M, haversineM } from "@/lib/game/geo";
 import { monsterByKey, RARITY_META, type MonsterRarity } from "@/lib/game/monsters";
 import { cn } from "@/lib/utils";
 import { SpawnRadarMap } from "@/components/game/SpawnRadarMap";
@@ -199,8 +199,31 @@ export function ARWalkSession(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── 디바이스 기울기 (3D 카메라 회전용) ────────────────────────
-  const { offset, needsPermission, requestPermission } = useDeviceOrientation(camStatus === "ready");
+  // ── 디바이스 기울기 + 나침반 ──────────────────────────────────
+  const { offset, heading, needsPermission, requestPermission } = useDeviceOrientation(
+    camStatus === "ready",
+  );
+
+  // 나침반 raw → 부드러운 보간 (튀는 값 억제). 360° 경계도 처리.
+  const smoothedHeadingRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (heading == null) return;
+    let raf = 0;
+    const tick = () => {
+      const cur = smoothedHeadingRef.current;
+      if (cur == null) {
+        smoothedHeadingRef.current = heading;
+      } else {
+        let delta = heading - cur;
+        while (delta > 180) delta -= 360;
+        while (delta < -180) delta += 360;
+        smoothedHeadingRef.current = (cur + delta * 0.18 + 360) % 360;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [heading]);
 
   // ── 활성 spawn (in_range 가 우선, 없으면 가장 가까운 것) ─────
   const activeSpawn = useMemo(() => {
@@ -342,7 +365,7 @@ export function ARWalkSession(props: Props) {
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/65" />
 
           {/* 3D AR scene — 근접 스폰이 있을 때만 합성 */}
-          {activeSpawn && (
+          {activeSpawn && userPos && (
             <Suspense fallback={null}>
               <MonsterArScene
                 monsterKey={activeSpawn.monster_key}
@@ -352,6 +375,17 @@ export function ARWalkSession(props: Props) {
                 orientation={offset}
                 onAim={handleAim}
                 monsterName={def?.name}
+                bearingDeg={bearingDeg(
+                  userPos.lat,
+                  userPos.lng,
+                  activeSpawn.latitude,
+                  activeSpawn.longitude,
+                )}
+                distanceM={
+                  activeSpawn.distance_m ??
+                  haversineM(userPos.lat, userPos.lng, activeSpawn.latitude, activeSpawn.longitude)
+                }
+                compassHeading={smoothedHeadingRef.current}
               />
             </Suspense>
           )}
@@ -387,16 +421,63 @@ export function ARWalkSession(props: Props) {
             </div>
           </div>
 
-          {/* 활성 spawn 라벨 */}
+          {/* 활성 spawn 라벨 + HP 바 */}
           {activeSpawn && def && meta && (
             <div className="pointer-events-none absolute left-0 right-0 top-16 z-10 flex flex-col items-center px-4 text-center">
               <p className="text-base font-semibold text-white drop-shadow-md">{def.name}</p>
               <p className="text-xs text-white/85">{meta.label}{useOrb ? " · 포획구 사용" : ""}</p>
+              {/* HP 바 — hits / required 로 진행도 표시 (반대로 줄어듦) */}
+              <div className="mt-2 h-2 w-40 overflow-hidden rounded-full bg-black/40">
+                <div
+                  className={cn(
+                    "h-full transition-all duration-200",
+                    activeSpawn.rarity === "legendary"
+                      ? "bg-amber-300"
+                      : activeSpawn.rarity === "rare"
+                        ? "bg-blue-400"
+                        : "bg-emerald-400",
+                  )}
+                  style={{
+                    width: `${Math.max(0, 100 - (hits / hitsRequired) * 100)}%`,
+                  }}
+                />
+              </div>
               <p className="mt-1 text-[11px] text-white/65">
                 {hits} / {hitsRequired} 명중 · {modeLabel(mode)}
               </p>
             </div>
           )}
+
+          {/* 시야 밖 몬스터 방향 화살표들 — 폰을 어느 방향으로 돌려야 할지 안내 */}
+          {userPos &&
+            smoothedHeadingRef.current != null &&
+            spawns
+              .filter((s) => s.id !== activeSpawn?.id)
+              .slice(0, 5)
+              .map((s) => {
+                const bearing = bearingDeg(userPos.lat, userPos.lng, s.latitude, s.longitude);
+                const delta = bearingDelta(smoothedHeadingRef.current!, bearing);
+                // 시야각 ±30° 안쪽이면 화살표 숨김 (사실상 보이는 영역).
+                if (Math.abs(delta) < 30) return null;
+                const isLeft = delta < 0;
+                const monsterDef = monsterByKey(s.monster_key);
+                return (
+                  <div
+                    key={s.id}
+                    className={cn(
+                      "pointer-events-none absolute top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full bg-black/50 px-2 py-1 text-xs text-white backdrop-blur-sm",
+                      isLeft ? "left-2" : "right-2",
+                    )}
+                  >
+                    {isLeft ? "←" : null}
+                    <span>{monsterDef?.emoji ?? "?"}</span>
+                    <span className="text-[10px] text-white/75">
+                      {s.distance_m ?? "?"}m
+                    </span>
+                    {!isLeft ? "→" : null}
+                  </div>
+                );
+              })}
 
           {/* 빈 화면 안내 — 근접 스폰 없을 때 */}
           {!activeSpawn && (
