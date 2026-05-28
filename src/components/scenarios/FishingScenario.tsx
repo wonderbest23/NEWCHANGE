@@ -26,6 +26,7 @@ import { markStepComplete } from "@/lib/scenario/actions";
 import { useGeneratedModel } from "@/lib/asset-forge/useGeneratedModel";
 import { fx } from "@/lib/game/fx";
 import { ScenarioCameraShell } from "./ScenarioCameraShell";
+import { AssetPreview } from "@/components/asset/AssetPreview";
 import type { ScenarioRunnerProps } from "@/lib/scenario/types";
 import { cn } from "@/lib/utils";
 
@@ -612,11 +613,17 @@ export default function FishingScenario({ onExit, onScenarioComplete }: Scenario
         )}
       </div>
 
-      {/* 잡기 컷씬 — 화면 가운데 큰 물고기 + 회전 점프 */}
+      {/* 잡기 컷씬 — AI GLB 물고기 우선, 없으면 emoji */}
       {showCatchReveal && caughtMeta && (
         <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
-          <div className="animate-fish-catch text-[180px] drop-shadow-2xl">
-            {caughtMeta.emoji}
+          <div className="animate-fish-catch drop-shadow-2xl">
+            <AssetPreview
+              kind="fish"
+              mode="3d"
+              size={280}
+              autoRotate
+              fallback={<span className="text-[180px]">{caughtMeta.emoji}</span>}
+            />
           </div>
           <div className="absolute bottom-1/3 left-0 right-0 text-center">
             <p className="text-2xl font-bold text-white drop-shadow-lg">{caughtMeta.name}</p>

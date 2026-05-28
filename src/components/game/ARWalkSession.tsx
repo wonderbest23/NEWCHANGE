@@ -42,6 +42,7 @@ import { useDeviceOrientation } from "@/hooks/useDeviceOrientation";
 import { bearingDeg, bearingDelta, CATCH_RADIUS_M, haversineM } from "@/lib/game/geo";
 import { monsterByKey, RARITY_META, type MonsterRarity } from "@/lib/game/monsters";
 import { pickBestAnchor, useObjectDetector } from "@/lib/ar/useObjectDetector";
+import { useGeneratedModel } from "@/lib/asset-forge/useGeneratedModel";
 import {
   blueprintFor,
   centerHintText,
@@ -269,6 +270,9 @@ export function ARWalkSession(props: Props) {
 
   // 발견 상태 표시용. (실제 hit 판정은 씬 내부 aimScore 가 결정)
   const isAimed = aimDelta != null && Math.abs(aimDelta) <= 18;
+
+  // AI 생성 몬스터 GLB (asset-forge active=true 일 때만 로드).
+  const generatedMonster = useGeneratedModel("monster");
 
   // ── 객체 인식 (Phase 1: 발견 상태에서만 동작, 보조 anchoring) ──
   // 카메라가 ready 이고 활성 spawn 이 발견 상태일 때만 검출 워커 활성화.
@@ -576,6 +580,7 @@ export function ARWalkSession(props: Props) {
                     ? { x: screenAnchor.x, y: screenAnchor.y, size: screenAnchor.size }
                     : null
                 }
+                glbUrl={generatedMonster.glbUrl ?? null}
               />
             </Suspense>
           )}

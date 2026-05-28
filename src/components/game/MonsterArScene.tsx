@@ -19,6 +19,7 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { MonsterRarity } from "@/lib/game/monsters";
 import { bearingDelta } from "@/lib/game/geo";
 import { fx } from "@/lib/game/fx";
@@ -47,6 +48,12 @@ export interface MonsterArSceneProps {
    * 앉아있는 듯한" 느낌을 만든다. null 이면 bearing-only.
    */
   screenAnchor?: { x: number; y: number; size: number } | null;
+
+  /**
+   * AI 생성 몬스터 GLB URL. 제공되면 기본 기하 도형 body 를 숨기고
+   * 이 GLB 를 합성한다. 눈/그림자/halo 는 그대로 유지.
+   */
+  glbUrl?: string | null;
 }
 
 const RARITY_COLOR: Record<MonsterRarity, number> = {
@@ -199,6 +206,7 @@ export function MonsterArScene({
   distanceM,
   compassHeading,
   screenAnchor,
+  glbUrl,
 }: MonsterArSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -218,6 +226,8 @@ export function MonsterArScene({
     screenAnchor ?? null,
   );
   anchorRef.current = screenAnchor ?? null;
+  const glbUrlRef = useRef<string | null>(glbUrl ?? null);
+  glbUrlRef.current = glbUrl ?? null;
 
   const stateRef = useRef<{
     renderer: THREE.WebGLRenderer;
@@ -603,6 +613,53 @@ export function MonsterArScene({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rarity]);
+
+  // ── AI 생성 GLB 로드 & 기본 body 교체 ────────────────────────
+  const loadedGlbUrlRef = useRef<string | null>(null);
+  const glbGroupRef = useRef<THREE.Group | null>(null);
+  useEffect(() => {
+    if (!glbUrl) return;
+    if (loadedGlbUrlRef.current === glbUrl) return;
+    const st = stateRef.current;
+    if (!st) return;
+    const loader = new GLTFLoader();
+    let cancelled = false;
+    loader.load(
+      glbUrl,
+      (gltf) => {
+        if (cancelled) return;
+        const st2 = stateRef.current;
+        if (!st2) return;
+        // 기존 GLB 가 있었으면 제거
+        if (glbGroupRef.current) {
+          st2.bundle.group.remove(glbGroupRef.current);
+          glbGroupRef.current = null;
+        }
+        // 기본 body 메시 숨김 (이름='body')
+        const body = st2.bundle.group.getObjectByName("body");
+        if (body) body.visible = false;
+        // GLB scene 을 body 자리에 추가
+        const g = gltf.scene;
+        const box = new THREE.Box3().setFromObject(g);
+        const sizeVec = new THREE.Vector3();
+        box.getSize(sizeVec);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+        g.position.sub(center);
+        const maxDim = Math.max(sizeVec.x, sizeVec.y, sizeVec.z);
+        const scale = 1.0 / Math.max(0.01, maxDim);
+        g.scale.setScalar(scale);
+        st2.bundle.group.add(g);
+        glbGroupRef.current = g;
+        loadedGlbUrlRef.current = glbUrl;
+      },
+      undefined,
+      (err) => console.warn("[MonsterArScene] GLB load failed", err),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [glbUrl]);
 
   // ── 명중 reaction ────────────────────────────────────────────
   const lastHitsRef = useRef(0);

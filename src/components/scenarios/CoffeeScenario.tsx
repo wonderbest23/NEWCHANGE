@@ -21,6 +21,7 @@ import { markStepComplete } from "@/lib/scenario/actions";
 import { scenarioById } from "@/lib/scenario/registry";
 import { ScenarioCameraShell } from "./ScenarioCameraShell";
 import { StepRunner } from "./StepRunner";
+import { AssetPreview } from "@/components/asset/AssetPreview";
 import type { ScenarioRunnerProps } from "@/lib/scenario/types";
 
 const STEP_ICONS = [RotateCw, RotateCw, Power, Milk];
@@ -77,6 +78,17 @@ export default function CoffeeScenario({ onExit, onScenarioComplete }: ScenarioR
         onScenarioComplete={() => onScenarioComplete?.(100)}
       />
 
+      {/* AI 커피머신 3D — 우측 상단 미니뷰 */}
+      <div className="pointer-events-none absolute right-3 top-3 z-20">
+        <AssetPreview
+          kind="coffee_machine"
+          mode="3d"
+          size={130}
+          fallback={null}
+          className="rounded-2xl border border-amber-500/30 backdrop-blur-sm"
+        />
+      </div>
+
       {/* 가상 머신 인터페이스 — placeholder */}
       <div className="pointer-events-auto absolute left-1/2 top-[20%] z-10 w-[90%] max-w-md -translate-x-1/2">
         <Card className="border-amber-500/40 bg-stone-900/90 p-4 text-white backdrop-blur-md">
@@ -107,9 +119,8 @@ export default function CoffeeScenario({ onExit, onScenarioComplete }: ScenarioR
                 : "다음 단계"}
           </button>
 
-          {/* TODO: 실제 GLB 에스프레소 머신 + AnimationMixer 합성 위치 */}
           <p className="mt-3 text-center text-[10px] text-white/40">
-            * 실제 3D 머신 모델은 추후 적용
+            AI 머신 모델은 우측 상단에 표시돼요
           </p>
         </Card>
       </div>

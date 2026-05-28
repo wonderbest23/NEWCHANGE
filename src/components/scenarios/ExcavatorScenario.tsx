@@ -14,6 +14,7 @@ import { markStepComplete } from "@/lib/scenario/actions";
 import { scenarioById } from "@/lib/scenario/registry";
 import { ScenarioCameraShell } from "./ScenarioCameraShell";
 import { StepRunner } from "./StepRunner";
+import { AssetPreview } from "@/components/asset/AssetPreview";
 import { cn } from "@/lib/utils";
 import type { ScenarioRunnerProps } from "@/lib/scenario/types";
 
@@ -158,8 +159,14 @@ export default function ExcavatorScenario({ onExit, onScenarioComplete }: Scenar
         </Card>
       </div>
 
-      {/* 가상 포크레인 — 화면 중앙에 간단한 SVG 실루엣 (TODO: GLB 모델로 교체) */}
+      {/* 가운데 — AI GLB 포크레인 우선, 없으면 SVG 실루엣 fallback */}
       <div className="pointer-events-none absolute left-1/2 top-1/2 z-0 -translate-x-1/2 -translate-y-1/2">
+        <AssetPreview
+          kind="excavator"
+          mode="3d"
+          size={280}
+          autoRotate
+          fallback={
         <svg width={220} height={180} viewBox="0 0 220 180" className={cn("drop-shadow-2xl")}>
           {/* 본체 */}
           <rect x={60} y={100} width={100} height={50} rx={8} fill="#facc15" />
@@ -180,6 +187,8 @@ export default function ExcavatorScenario({ onExit, onScenarioComplete }: Scenar
             </g>
           </g>
         </svg>
+          }
+        />
       </div>
 
       {/* 좌/우 가상 조이스틱 */}

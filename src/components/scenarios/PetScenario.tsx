@@ -20,6 +20,7 @@ import { getOrCreatePet, interactWithPet } from "@/lib/scenario/actions";
 import { useHandTracker } from "@/lib/ar/useHandTracker";
 import { fx } from "@/lib/game/fx";
 import { ScenarioCameraShell } from "./ScenarioCameraShell";
+import { AssetPreview } from "@/components/asset/AssetPreview";
 import type { ScenarioRunnerProps } from "@/lib/scenario/types";
 import { cn } from "@/lib/utils";
 
@@ -135,17 +136,23 @@ export default function PetScenario({ onExit }: ScenarioRunnerProps) {
         </Card>
       </div>
 
-      {/* 카메라 가운데 큰 강아지 이모지 (TODO: GLB 모델로 교체) */}
+      {/* 가운데 — AI 생성 강아지 GLB 가 있으면 3D, 없으면 이모지 fallback */}
       <button
         type="button"
         onClick={() => actMut.mutate("pet")}
         className={cn(
-          "pointer-events-auto absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 select-none text-[140px] drop-shadow-2xl",
+          "pointer-events-auto absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 select-none drop-shadow-2xl",
           actMut.isPending && "animate-bounce",
         )}
         aria-label="강아지 쓰다듬기"
       >
-        🐶
+        <AssetPreview
+          kind="pet"
+          mode="3d"
+          size={260}
+          autoRotate={!actMut.isPending}
+          fallback={<span className="text-[140px]">🐶</span>}
+        />
       </button>
 
       {/* 하단 액션 — 게임패드 스타일 */}

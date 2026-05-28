@@ -22,6 +22,7 @@ import { markStepComplete } from "@/lib/scenario/actions";
 import { scenarioById } from "@/lib/scenario/registry";
 import { ScenarioCameraShell } from "./ScenarioCameraShell";
 import { StepRunner } from "./StepRunner";
+import { AssetPreview } from "@/components/asset/AssetPreview";
 import type { ScenarioRunnerProps } from "@/lib/scenario/types";
 
 const MENU = [
@@ -63,11 +64,30 @@ export default function KioskScenario({ onExit, onScenarioComplete }: ScenarioRu
         onExit={onExit}
       />
 
+      {/* AI 키오스크 3D — 우측 상단 미니뷰 */}
+      <div className="pointer-events-none absolute right-3 top-3 z-20">
+        <AssetPreview
+          kind="kiosk"
+          mode="3d"
+          size={120}
+          fallback={null}
+          className="rounded-2xl border border-white/20 backdrop-blur-sm"
+        />
+      </div>
+
       {/* 가상 키오스크 패널 — 화면 중앙 */}
       <div className="pointer-events-auto absolute left-1/2 top-[18%] z-10 w-[90%] max-w-md -translate-x-1/2">
         <Card className="border-zinc-300/30 bg-white/95 p-4 backdrop-blur-md">
           <header className="mb-3 flex items-center justify-between">
-            <h2 className="font-display text-lg">☕ 카페 키오스크</h2>
+            <div className="flex items-center gap-2">
+              <AssetPreview
+                kind="kiosk"
+                mode="image"
+                size={36}
+                fallback={<span className="text-2xl">☕</span>}
+              />
+              <h2 className="font-display text-lg">카페 키오스크</h2>
+            </div>
             <span className="text-xs text-foreground/60">실습 모드</span>
           </header>
 
