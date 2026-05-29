@@ -5,11 +5,13 @@ import { toast } from "sonner";
 import { Camera, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { useAuth } from "@/lib/auth/mock-auth";
 import { authHeaders } from "@/lib/auth/server-fn-headers";
 import { haversineM, CATCH_RADIUS_M } from "@/lib/game/geo";
 import {
   acceptWalkMonsterConsent,
   catchWalkMonster,
+  forceSpawnAllMonstersDebug,
   forceSpawnNearby,
   getWalkMonsterProfile,
   resetWalkMonsterSession,
@@ -18,6 +20,11 @@ import {
 import { ARWalkSession, type ArSpawn } from "@/components/game/ARWalkSession";
 import { useGameCatchFeed } from "@/hooks/useGameCatchFeed";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  WALK_MONSTER_DEBUG_ENABLED,
+  WALK_MONSTER_DEBUG_POS,
+  debugUserPos,
+} from "@/lib/game/walk-monster-debug";
 
 type UserPos = { lat: number; lng: number };
 
@@ -35,6 +42,7 @@ type UserPos = { lat: number; lng: number };
  * 카드 스크롤 UI 는 ARWalkSession 안의 메뉴(sheet) 로 이동.
  */
 export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const qc = useQueryClient();
   const [tracking, setTracking] = useState(false);
   const [userPos, setUserPos] = useState<UserPos | null>(null);
@@ -68,9 +76,10 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
         data: userPos ? { latitude: userPos.lat, longitude: userPos.lng } : undefined,
         headers: await authHeaders(),
       } as Parameters<typeof getWalkMonsterProfile>[0]),
-    enabled: !gateError,
+    enabled: !gateError && isAuthenticated,
     staleTime: 15_000,
     retry: 1,
+    meta: { silent: true },
   });
 
   const refreshUserPosition = useCallback(() => {
@@ -145,6 +154,11 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
   }, []);
 
   const startTracking = useCallback(() => {
+    if (WALK_MONSTER_DEBUG_ENABLED && !navigator.geolocation) {
+      setUserPos({ ...WALK_MONSTER_DEBUG_POS });
+      setTracking(true);
+      return;
+    }
     if (!navigator.geolocation) {
       toast.error("이 기기는 위치 추적을 지원하지 않아요");
       return;
@@ -154,6 +168,12 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
     watchIdRef.current = navigator.geolocation.watchPosition(
       handlePosition,
       (err) => {
+        if (WALK_MONSTER_DEBUG_ENABLED) {
+          setUserPos({ ...WALK_MONSTER_DEBUG_POS });
+          setTracking(true);
+          toast.message("테스트 모드: 위치 없이 서울숲 좌표로 진행합니다");
+          return;
+        }
         stopTracking();
         toast.error(
           err.code === err.PERMISSION_DENIED ? "위치 권한을 허용해 주세요" : "위치 추적 오류",
@@ -282,6 +302,29 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
     },
   });
 
+  const forceSpawnAllMut = useMutation({
+    mutationFn: async (payload: { latitude: number; longitude: number }) =>
+      forceSpawnAllMonstersDebug({
+        data: payload,
+        headers: await authHeaders(),
+      } as Parameters<typeof forceSpawnAllMonstersDebug>[0]),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        const msg =
+          res.reason === "no_consent"
+            ? "동의가 필요해요"
+            : res.reason === "debug_disabled"
+              ? "디버그 모드에서만 사용할 수 있어요"
+              : "몬스터를 생성할 수 없어요";
+        toast.info(msg);
+        return;
+      }
+      toast.success(`몬스터 ${res.count}종 생성 완료!`);
+      qc.invalidateQueries({ queryKey: ["walk-monster-profile"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "생성 실패"),
+  });
+
   // 동의 후 활성 스폰이 0개인 첫 1회: 자동으로 테스트 스폰 1마리.
   // 사용자가 걷기 전이라도 바로 게임 흐름을 체험할 수 있게.
   const autoSpawnTriedRef = useRef(false);
@@ -324,10 +367,26 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
     );
   }
 
-  if (profileQ.isLoading) {
+  if (authLoading || profileQ.isLoading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="mx-auto max-w-lg space-y-4 px-4 py-16 text-center">
+        <p className="text-lg text-foreground/80">산책 몬스터는 로그인 후 이용할 수 있어요.</p>
+        <Button asChild size="lg">
+          <Link to="/auth" search={{ mode: "signin", redirect: "/scenario/walk_monster" }}>
+            로그인하기
+          </Link>
+        </Button>
+        <Button asChild variant="ghost" size="sm">
+          <Link to="/scenario">시나리오 목록</Link>
+        </Button>
       </div>
     );
   }
@@ -441,15 +500,16 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
       onResetSession={() => resetMut.mutate()}
       onRefreshPosition={refreshUserPosition}
       onCatch={(spawn, useOrb) => {
-        if (!userPos) {
+        const pos = debugUserPos(userPos);
+        if (!pos) {
           toast.info("위치를 확인한 뒤 다시 시도해 주세요");
           refreshUserPosition();
           return;
         }
         catchMut.mutate({
           spawn_id: spawn.id,
-          latitude: userPos.lat,
-          longitude: userPos.lng,
+          latitude: pos.lat,
+          longitude: pos.lng,
           use_orb: useOrb,
         });
       }}
@@ -457,15 +517,37 @@ export function WalkMonsterBeta({ gateError }: { gateError?: string }) {
         stopTracking();
         setExited(true);
       }}
-      onForceSpawn={() => {
-        if (!userPos) {
+      onForceSpawn={(coords) => {
+        const pos = coords ?? debugUserPos(userPos);
+        if (!pos) {
           toast.info("위치를 확인한 뒤 다시 시도해 주세요");
           refreshUserPosition();
           return;
         }
-        forceSpawnMut.mutate({ latitude: userPos.lat, longitude: userPos.lng });
+        if (!userPos && WALK_MONSTER_DEBUG_ENABLED) {
+          setUserPos({ ...WALK_MONSTER_DEBUG_POS });
+        }
+        forceSpawnMut.mutate({ latitude: pos.lat, longitude: pos.lng });
       }}
-      isSpawning={forceSpawnMut.isPending}
+      onForceSpawnAll={(coords) => {
+        const pos = coords ?? debugUserPos(userPos);
+        if (!pos) {
+          toast.info("위치를 확인한 뒤 다시 시도해 주세요");
+          refreshUserPosition();
+          return;
+        }
+        if (!userPos && WALK_MONSTER_DEBUG_ENABLED) {
+          setUserPos({ ...WALK_MONSTER_DEBUG_POS });
+        }
+        forceSpawnAllMut.mutate({ latitude: pos.lat, longitude: pos.lng });
+      }}
+      onDebugMockLocation={() => {
+        if (!userPos && WALK_MONSTER_DEBUG_ENABLED) {
+          setUserPos({ ...WALK_MONSTER_DEBUG_POS });
+          toast.message("테스트 위치(서울숲)로 진행합니다");
+        }
+      }}
+      isSpawning={forceSpawnMut.isPending || forceSpawnAllMut.isPending}
     />
   );
 }

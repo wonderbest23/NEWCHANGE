@@ -152,18 +152,18 @@ export function pickBestAnchor(
   videoHeight: number,
 ): DetectionDTO | null {
   if (!detections.length) return null;
-  // 화면 중앙에 가깝고, 신뢰도 높고, 가중치 큰 객체 우선
+  // 지면/가구 후보 우선 — 중앙 편향은 최소화 (몬스터가 십자선에만 붙는 현상 방지)
   let best: { d: DetectionDTO; score: number } | null = null;
   const cx = videoWidth / 2;
-  const cy = videoHeight / 2;
-  const maxDist = Math.hypot(cx, cy);
+  const maxDist = Math.hypot(cx, videoHeight / 2);
   for (const d of detections) {
     const w = OBJECT_ANCHOR_WEIGHT[d.category] ?? 0.4; // 알 수 없는 카테고리도 약간 허용
     if (w === 0) continue;
     const bx = d.x + d.width / 2;
     const by = d.y + d.height / 2;
     const distNorm = 1 - Math.min(1, Math.hypot(bx - cx, by - cy) / maxDist);
-    const score = w * 0.6 + d.score * 0.25 + distNorm * 0.15;
+    const groundNorm = Math.min(1, (by / videoHeight) * 1.15);
+    const score = w * 0.5 + d.score * 0.28 + groundNorm * 0.17 + distNorm * 0.05;
     if (!best || score > best.score) best = { d, score };
   }
   return best?.d ?? null;

@@ -40,12 +40,15 @@ async function loadGLB(url: string): Promise<THREE.Group> {
   return original.clone(true);
 }
 
-export function useGeneratedModel(kind: string) {
+export function useGeneratedModel(kind: string, monsterKey?: string | null) {
   const q = useQuery({
-    queryKey: ["asset-forge-active", kind],
+    queryKey: ["asset-forge-active", kind, monsterKey ?? ""],
     queryFn: async () =>
       getActiveAsset({
-        data: { kind },
+        data: {
+          kind,
+          ...(kind === "monster" && monsterKey ? { monster_key: monsterKey } : {}),
+        },
         headers: await authHeaders(),
       } as Parameters<typeof getActiveAsset>[0]),
     staleTime: 30_000,

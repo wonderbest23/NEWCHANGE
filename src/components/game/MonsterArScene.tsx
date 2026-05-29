@@ -23,6 +23,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { MonsterRarity } from "@/lib/game/monsters";
 import { bearingDelta } from "@/lib/game/geo";
 import { fx } from "@/lib/game/fx";
+import { anchorLerpFactor, computeGroundScreenY, screenYToWorldY } from "@/lib/ar/groundAnchor";
 
 type Orientation = { x: number; y: number };
 
@@ -37,6 +38,8 @@ export interface MonsterArSceneProps {
 
   /** 사용자→몬스터 방위각 0~360°. */
   bearingDeg?: number;
+  /** 나침반−몬스터 방위 차이(°). 제공 시 씬 배치·aimScore 에 우선 사용. */
+  bearingDeltaDeg?: number | null;
   /** 사용자→몬스터 거리(m). 스케일에만 영향. */
   distanceM?: number;
   /** 디바이스 나침반 방위. null이면 정면 가정. */
@@ -47,7 +50,16 @@ export interface MonsterArSceneProps {
    * 제공되면 bearing-based 위치를 이쪽으로 부드럽게 끌어당겨 "이 객체 위에
    * 앉아있는 듯한" 느낌을 만든다. null 이면 bearing-only.
    */
-  screenAnchor?: { x: number; y: number; size: number } | null;
+  screenAnchor?: { x: number; y: number; size: number; category?: string } | null;
+
+  /** 카메라 pitch (rad) — 지면 Y 추정 */
+  devicePitchRad?: number | null;
+
+  /** aimScore 0..1 변경 시 (HUD 판정용) */
+  onAimScoreChange?: (score: number) => void;
+
+  /** 조우 중 몬스터 항상 표시 (walking 중 숨김) */
+  forceVisible?: boolean;
 
   /**
    * AI 생성 몬스터 GLB URL. 제공되면 기본 기하 도형 body 를 숨기고
@@ -82,8 +94,9 @@ function distanceToScale(distM: number): number {
   return Math.max(0.6, Math.min(2.4, s));
 }
 
-// 시야각(도) — 카메라 FOV 와 매치
-const HFOV_DEG = 65;
+// 시야각(도) — PerspectiveCamera vertical FOV 와 매치
+const VFOV_DEG = 65;
+const MAX_LATERAL_DEG = VFOV_DEG / 2;
 // 정중앙 ±이 각도 안쪽이면 100% noticed. 그 밖은 점점 숨김.
 const NOTICE_FULL_DEG = 12;
 const NOTICE_FADE_DEG = 28;
@@ -203,9 +216,13 @@ export function MonsterArScene({
   onAim,
   monsterName,
   bearingDeg: monsterBearing,
+  bearingDeltaDeg,
   distanceM,
   compassHeading,
   screenAnchor,
+  devicePitchRad,
+  onAimScoreChange,
+  forceVisible = false,
   glbUrl,
 }: MonsterArSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -216,16 +233,24 @@ export function MonsterArScene({
   compassRef.current = compassHeading ?? null;
   const bearingRef = useRef<number | undefined>(monsterBearing);
   bearingRef.current = monsterBearing;
+  const bearingDeltaRef = useRef<number | null>(bearingDeltaDeg ?? null);
+  bearingDeltaRef.current = bearingDeltaDeg ?? null;
   const distanceRef = useRef<number>(distanceM ?? 10);
   distanceRef.current = distanceM ?? 10;
   const hitsRef = useRef(hits);
   hitsRef.current = hits;
   const requiredRef = useRef(hitsRequired);
   requiredRef.current = hitsRequired;
-  const anchorRef = useRef<{ x: number; y: number; size: number } | null>(
+  const anchorRef = useRef<{ x: number; y: number; size: number; category?: string } | null>(
     screenAnchor ?? null,
   );
   anchorRef.current = screenAnchor ?? null;
+  const pitchRef = useRef(devicePitchRad ?? null);
+  pitchRef.current = devicePitchRad ?? null;
+  const onAimScoreChangeRef = useRef(onAimScoreChange);
+  onAimScoreChangeRef.current = onAimScoreChange;
+  const forceVisibleRef = useRef(forceVisible);
+  forceVisibleRef.current = forceVisible;
   const glbUrlRef = useRef<string | null>(glbUrl ?? null);
   glbUrlRef.current = glbUrl ?? null;
 
@@ -252,6 +277,8 @@ export function MonsterArScene({
     escapeUntilMs: number;
     escapeOffset: THREE.Vector3;
     nextEscapeAtMs: number;
+    anchorStable: number;
+    lastReportedAim: number;
     // 결정타
     finishing: boolean;
     finishStartMs: number;
@@ -275,7 +302,7 @@ export function MonsterArScene({
 
     const scene = new THREE.Scene();
 
-    const camera = new THREE.PerspectiveCamera(HFOV_DEG, width / height, 0.1, 50);
+    const camera = new THREE.PerspectiveCamera(VFOV_DEG, width / height, 0.1, 50);
     camera.position.set(0, 0, 0);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -322,6 +349,8 @@ export function MonsterArScene({
       nextEscapeAtMs: performance.now() + 7000 + Math.random() * 4000,
       finishing: false,
       finishStartMs: 0,
+      anchorStable: 0,
+      lastReportedAim: -1,
     };
 
     const ro = new ResizeObserver(() => {
@@ -395,21 +424,35 @@ export function MonsterArScene({
       // ── aimScore 계산 ───────────────────────────────────────
       const compass = compassRef.current;
       const bearing = bearingRef.current;
-      let rawAimScore = 0.5; // compass 없으면 중간값 (항상 약간 보이게)
+      const deltaFromParent = bearingDeltaRef.current;
+      let rawAimScore = 0.35;
       let lateralRad = 0;
-      if (typeof compass === "number" && typeof bearing === "number") {
-        const delta = bearingDelta(compass, bearing);
-        const absDelta = Math.abs(delta);
+      let deltaDeg: number | null = null;
+      if (typeof deltaFromParent === "number" && Number.isFinite(deltaFromParent)) {
+        deltaDeg = deltaFromParent;
+      } else if (typeof compass === "number" && typeof bearing === "number") {
+        deltaDeg = bearingDelta(compass, bearing);
+      }
+      if (deltaDeg != null) {
+        const absDelta = Math.abs(deltaDeg);
         rawAimScore = aimScoreFromDelta(absDelta);
-        // 화면에서의 좌우 시차: ±NOTICE_FADE_DEG 사이를 ±0.6 정도 좌우 이동으로 매핑
-        const screenAngleDeg = Math.max(-NOTICE_FADE_DEG, Math.min(NOTICE_FADE_DEG, delta));
+        const screenAngleDeg = Math.max(-MAX_LATERAL_DEG, Math.min(MAX_LATERAL_DEG, deltaDeg));
         lateralRad = (screenAngleDeg * Math.PI) / 180;
       } else {
-        // compass 없으면 자이로 시차만 미세 적용
-        lateralRad = (orientationRef.current.x / 1200) * Math.PI;
+        lateralRad = (orientationRef.current.x / 900) * Math.PI;
       }
       // aimScore 부드럽게 (5fps 정도로 변화)
       st.aimScore += (rawAimScore - st.aimScore) * Math.min(1, dt * 6);
+      if (forceVisibleRef.current) {
+        st.aimScore = Math.max(st.aimScore, 0.85);
+      }
+      if (
+        onAimScoreChangeRef.current &&
+        Math.abs(st.aimScore - st.lastReportedAim) > 0.04
+      ) {
+        st.lastReportedAim = st.aimScore;
+        onAimScoreChangeRef.current(st.aimScore);
+      }
 
       const noticed = st.aimScore >= 0.55;
       if (noticed && !prevNotice && !st.finishing) {
@@ -431,20 +474,30 @@ export function MonsterArScene({
       // 카메라 시야 가운데(0.5, 0.5) 가 z=-RENDER_DEPTH 정중앙에 대응.
       const anchor = anchorRef.current;
       if (anchor) {
-        const fovRad = (HFOV_DEG * Math.PI) / 180;
+        st.anchorStable = Math.min(12, st.anchorStable + 1);
+      } else {
+        st.anchorStable = Math.max(0, st.anchorStable - 1);
+      }
+      const lerpK = anchorLerpFactor(st.anchorStable);
+
+      if (anchor) {
+        const fovRad = (VFOV_DEG * Math.PI) / 180;
         const halfWidthAtDepth = Math.tan(fovRad / 2) * RENDER_DEPTH;
-        // anchor 가 화면 가로축에서 (0.5 - x) 만큼 떨어졌을 때 world x 거리.
-        const anchorXWorld = (0.5 - anchor.x) * 2 * halfWidthAtDepth * -1;
-        // 세로축은 카메라 aspect 고려가 필요하지만 대략 같은 스케일로 처리.
-        const anchorYWorld = (0.5 - anchor.y) * 2 * halfWidthAtDepth * 0.8;
-        // bearing 결과와 anchor 결과를 75:25 → 점점 anchor 쪽으로 (씬 내부 lerp 는
-        // 매 프레임 누적되므로 한 번에 끌어당기지 않음)
-        baseX += (anchorXWorld - baseX) * 0.18;
-        baseYBias = anchorYWorld * 0.35; // 너무 위/아래는 부자연스러우니 일부만
+        const anchorXWorld = (anchor.x - 0.5) * 2 * halfWidthAtDepth;
+        const anchorYWorld = (0.5 - anchor.y) * 2 * halfWidthAtDepth * 0.85;
+        baseX += (anchorXWorld - baseX) * lerpK;
+        baseYBias += (anchorYWorld - baseYBias) * lerpK;
       }
 
-      // 호버 (+ 객체 앵커가 화면 위쪽이면 살짝 위에, 아래쪽이면 살짝 아래로)
-      const hoverY = baseYBias + Math.sin(t * 2.0) * 0.07;
+      const groundScreenY = computeGroundScreenY({
+        pitchRad: pitchRef.current,
+        anchorTopY: anchor ? anchor.y - anchor.size / 2 : undefined,
+        anchorCategory: anchor?.category,
+      });
+      const groundY = screenYToWorldY(groundScreenY, RENDER_DEPTH, VFOV_DEG);
+      const bodyHalfHeight = 0.55 * distanceToScale(distanceRef.current);
+
+      const hoverY = baseYBias + Math.sin(t * 2.0) * 0.03;
 
       // 숨김 상태에선 약간 아래로 가라앉음 (peek-a-boo)
       const hideDip = (1 - st.aimScore) * -0.35;
@@ -482,7 +535,11 @@ export function MonsterArScene({
         st.nextEscapeAtMs = now + 5000 + Math.random() * 5000;
       }
 
-      st.bundle.group.position.set(baseX + kx, hoverY + hideDip + ky, baseZ + kz);
+      st.bundle.group.position.set(
+        baseX + kx,
+        groundY + bodyHalfHeight + hoverY + hideDip + ky,
+        baseZ + kz,
+      );
 
       // 카메라를 향해 lookAt + 약간의 idle 회전 (noticed 일 때만 자기축 빠른 회전)
       st.bundle.group.lookAt(st.camera.position.x, st.bundle.group.position.y + 0.15, st.camera.position.z);

@@ -27,7 +27,11 @@ export type FishingPhase =
   | "waiting" // 찌 물 위에서 입질 대기
   | "bite" // 입질 발생 — 챔질 윈도우
   | "fighting" // 힘겨루기 (텐션 게임)
-  | "caught" // 잡힘 — 보상 직전
+  | "hook_success" // 챔질 성공
+  | "fish_breach" // 물 밖으로 점프
+  | "fish_land" // 착지
+  | "fish_flop" // 바닥 팔딱
+  | "capture_confirm" // 포획 확정 연출
   | "escaped" // 놓침
   | "reward"; // 보상 화면
 
@@ -44,6 +48,13 @@ export type GameContext =
     }
   | { kind: "aimed"; monster: ArSpawn; captureMode: "aim" | "tap" | "rhythm" }
   | { kind: "capturing"; monster: ArSpawn; progress: number /* 0..1 */ }
+  | {
+      kind: "encounter";
+      monster: ArSpawn;
+      phase: "enter" | "fight" | "throw" | "wiggle";
+    }
+  | { kind: "caught"; monster: ArSpawn; monsterName: string }
+  | { kind: "fled"; monster: ArSpawn }
   // 낚시 — 10단계 상태머신
   | {
       kind: "fishing";
@@ -127,6 +138,7 @@ export type ActionId =
   | "fishing_bait"
   | "fishing_rod"
   | "fishing_reward"
+  | "fishing_capture_confirm"
   | "fishing_retry"
   | "fishing_exit"
   | "pet_feed"
@@ -134,7 +146,9 @@ export type ActionId =
   | "pet_pet"
   | "coop_combine"
   | "coop_chat"
-  | "coop_leave";
+  | "coop_leave"
+  | "encounter_throw"
+  | "encounter_flee";
 
 export interface ActionBlueprint {
   primary: {
@@ -184,8 +198,52 @@ export function blueprintFor(ctx: GameContext): ActionBlueprint {
           label: "결정타!",
           sublabel: `${Math.round(ctx.progress * 100)}%`,
           tone: "amber",
+          pulse: true,
         },
         secondaryIds: ["menu"],
+        centerHintKey: "capturing",
+      };
+    case "encounter":
+      if (ctx.phase === "enter") {
+        return {
+          primary: null,
+          secondaryIds: ["menu", "exit"],
+          centerHintKey: "encounter.enter",
+        };
+      }
+      if (ctx.phase === "fight") {
+        return {
+          primary: {
+            id: "encounter_throw",
+            label: "던지기",
+            sublabel: "포획구",
+            tone: "rose",
+            pulse: true,
+          },
+          secondaryIds: ["encounter_flee", "menu"],
+          centerHintKey: "encounter.fight",
+        };
+      }
+      if (ctx.phase === "throw" || ctx.phase === "wiggle") {
+        return {
+          primary: null,
+          secondaryIds: ["encounter_flee"],
+          centerHintKey: ctx.phase === "wiggle" ? "encounter.wiggle" : "encounter.throw",
+        };
+      }
+      return { primary: null, secondaryIds: ["menu"] };
+    case "caught":
+      return {
+        primary: { id: "attack", label: "확인", tone: "primary" },
+        secondaryIds: ["menu"],
+        centerHintKey: "caught",
+        centerHintArgs: { name: ctx.monsterName },
+      };
+    case "fled":
+      return {
+        primary: { id: "force_spawn", label: "다시 탐색", tone: "neutral" },
+        secondaryIds: ["menu", "exit"],
+        centerHintKey: "fled",
       };
     case "fishing": {
       const baseSecondary: ActionId[] = ["fishing_bait", "fishing_rod", "fishing_exit"];
@@ -198,45 +256,59 @@ export function blueprintFor(ctx: GameContext): ActionBlueprint {
           };
         case "ready":
           return {
-            primary: { id: "fishing_cast_start", label: "캐스팅", sublabel: "길게 눌러 충전", tone: "blue", holdable: true },
+            primary: { id: "fishing_cast_start", label: "던지기", tone: "blue", holdable: true },
             secondaryIds: baseSecondary,
             centerHintKey: "fishing.ready",
           };
         case "casting":
           return {
-            primary: { id: "fishing_cast_release", label: "놓기!", sublabel: `힘 ${Math.round((ctx.castPower ?? 0) * 100)}%`, tone: "amber" },
+            primary: { id: "fishing_cast_release", label: "놓기", tone: "amber" },
             secondaryIds: baseSecondary,
             centerHintKey: "fishing.casting",
           };
         case "floating":
           return {
-            primary: { id: "fishing_jiggle", label: "흔들기", sublabel: "물고기 유인", tone: "neutral" },
+            primary: { id: "fishing_jiggle", label: "흔들기", tone: "neutral" },
             secondaryIds: baseSecondary,
             centerHintKey: "fishing.floating",
           };
         case "waiting":
           return {
-            primary: null,
+            primary: { id: "fishing_jiggle", label: "흔들기", tone: "neutral" },
             secondaryIds: baseSecondary,
             centerHintKey: "fishing.waiting",
           };
         case "bite":
           return {
-            primary: { id: "fishing_hook", label: "챔질!", sublabel: "지금!", tone: "rose", pulse: true },
+            primary: { id: "fishing_hook", label: "챔질", tone: "rose", pulse: true },
             secondaryIds: ["menu"],
             centerHintKey: "fishing.bite",
           };
         case "fighting":
           return {
-            primary: { id: "fishing_reel", label: "릴 감기", sublabel: `텐션 ${Math.round((ctx.tension ?? 0) * 100)}%`, tone: "amber", holdable: true },
+            primary: { id: "fishing_reel", label: "감기", tone: "amber", holdable: true },
             secondaryIds: ["fishing_loosen", "fishing_tighten"],
             centerHintKey: "fishing.fighting",
           };
-        case "caught":
+        case "hook_success":
+        case "fish_breach":
+        case "fish_land":
           return {
-            primary: { id: "fishing_reward", label: "보상 받기", sublabel: ctx.fishName, tone: "amber", pulse: true },
+            primary: null,
             secondaryIds: ["menu"],
-            centerHintKey: "fishing.caught",
+            centerHintKey: "fishing.cinematic",
+          };
+        case "fish_flop":
+          return {
+            primary: { id: "fishing_capture_confirm", label: "잡기", tone: "rose", pulse: true },
+            secondaryIds: ["menu"],
+            centerHintKey: "fishing.flop",
+          };
+        case "capture_confirm":
+          return {
+            primary: null,
+            secondaryIds: ["menu"],
+            centerHintKey: "fishing.capture_confirm",
           };
         case "escaped":
           return {
@@ -246,7 +318,7 @@ export function blueprintFor(ctx: GameContext): ActionBlueprint {
           };
         case "reward":
           return {
-            primary: { id: "fishing_retry", label: "한 번 더", tone: "primary" },
+            primary: { id: "fishing_reward", label: "확인", tone: "primary" },
             secondaryIds: ["fishing_exit"],
             centerHintKey: "fishing.reward",
           };
@@ -276,6 +348,13 @@ export const CENTER_HINTS: Record<string, string> = {
   "hiding.right": "오른쪽으로 천천히 돌리세요 →",
   "hiding.center": "거의 다 왔어요…",
   aimed: "정조준! 공격 버튼을 누르세요",
+  capturing: "결정타! 몬스터를 잡으세요",
+  "encounter.enter": "야생 몬스터가 나타났다!",
+  "encounter.fight": "조준 후 던지기를 누르세요",
+  "encounter.throw": "위로 스와이프해 포획구를 던지세요",
+  "encounter.wiggle": "흔들릴 때 탭하세요!",
+  caught: "{name} 포획 성공!",
+  fled: "몬스터가 도망갔어요…",
   "fishing.spot_select": "근처 공원 낚시터를 찾는 중…",
   "fishing.ready": "버튼을 길게 눌러 찌를 던지세요",
   "fishing.casting": "힘을 모은 뒤 손을 떼세요",
@@ -283,7 +362,9 @@ export const CENTER_HINTS: Record<string, string> = {
   "fishing.waiting": "물결과 찌 움직임을 지켜보세요",
   "fishing.bite": "지금이에요! 챔질하세요",
   "fishing.fighting": "텐션을 초록 구간에 유지하세요",
-  "fishing.caught": "잡았어요!",
+  "fishing.cinematic": "물고기 포획 연출 중…",
+  "fishing.flop": "지금 포획 확정을 누르세요",
+  "fishing.capture_confirm": "포획 확정!",
   "fishing.escaped": "물고기가 도망갔어요…",
   "fishing.reward": "보상 받기",
   "pet.happy": "기분이 좋아요",

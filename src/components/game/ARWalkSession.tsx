@@ -55,6 +55,20 @@ import { SpawnRadarMap } from "@/components/game/SpawnRadarMap";
 import { GameInventoryPanel } from "@/components/game/GameInventoryPanel";
 import { GameLeaderboard } from "@/components/game/GameLeaderboard";
 import { GameHUD } from "@/components/game/GameHUD";
+import { CaptureThrowOverlay } from "@/components/game/CaptureThrowOverlay";
+import { GameDexPanel } from "@/components/game/GameDexPanel";
+import {
+  ENCOUNTER_ENTER_MS,
+  encounterShowsMonster,
+  LEGENDARY_FLEE_MS,
+  type EncounterPhase,
+} from "@/lib/game/encounter-state";
+import { fx } from "@/lib/game/fx";
+import {
+  WALK_MONSTER_DEBUG_ENABLED,
+  WALK_MONSTER_DEBUG_POS,
+  debugUserPos,
+} from "@/lib/game/walk-monster-debug";
 
 const MonsterArScene = lazy(() =>
   import("@/components/game/MonsterArScene").then((m) => ({ default: m.MonsterArScene })),
@@ -103,7 +117,11 @@ interface Props {
   onRefreshPosition: () => void;
   onCatch: (spawn: ArSpawn, useOrb: boolean) => void;
   onExit: () => void;
-  onForceSpawn?: () => void;
+  onForceSpawn?: (coords?: { lat: number; lng: number }) => void;
+  /** 디버그: MONSTERS 8종 일괄 스폰 */
+  onForceSpawnAll?: (coords?: { lat: number; lng: number }) => void;
+  /** 테스트 모드에서 mock GPS 적용 (부모 state 동기화) */
+  onDebugMockLocation?: () => void;
 }
 
 const RHYTHM_INTERVAL_MS = 850;
@@ -145,17 +163,27 @@ export function ARWalkSession(props: Props) {
     onCatch,
     onExit,
     onForceSpawn,
+    onForceSpawnAll,
+    onDebugMockLocation,
   } = props;
 
+  const effectiveUserPos = debugUserPos(userPos);
+
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [camStatus, setCamStatus] = useState<"loading" | "ready" | "error">("loading");
   const [camError, setCamError] = useState("");
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeSpawnId, setActiveSpawnId] = useState<string | null>(null);
+  const [encounterPhase, setEncounterPhase] = useState<EncounterPhase>("walking");
   const [hits, setHits] = useState(0);
   const [mode, setMode] = useState<CaptureMode>("aim");
+  const aimScoreRef = useRef(0.5);
+  const encounterStartedAtRef = useRef(0);
+  const encounterCooldownUntilRef = useRef(0);
+  const [pendingDebugEncounter, setPendingDebugEncounter] = useState(false);
 
   // ── 카메라 lifecycle ─────────────────────────────────────────
   useEffect(() => {
@@ -258,29 +286,28 @@ export function ARWalkSession(props: Props) {
 
   // ── 활성 spawn 방향 vs 현재 폰 방향 (UI 안내용) ──────────────
   const aimDelta = useMemo(() => {
-    if (!activeSpawn || !userPos || smoothedHeadingRef.current == null) return null;
+    if (!activeSpawn || !effectiveUserPos || smoothedHeadingRef.current == null) return null;
     const monsterBearing = bearingDeg(
-      userPos.lat,
-      userPos.lng,
+      effectiveUserPos.lat,
+      effectiveUserPos.lng,
       activeSpawn.latitude,
       activeSpawn.longitude,
     );
     return bearingDelta(smoothedHeadingRef.current, monsterBearing);
-  }, [activeSpawn?.id, activeSpawn?.latitude, activeSpawn?.longitude, userPos, heading]);
+  }, [activeSpawn?.id, activeSpawn?.latitude, activeSpawn?.longitude, effectiveUserPos, heading]);
 
   // 발견 상태 표시용. (실제 hit 판정은 씬 내부 aimScore 가 결정)
   const isAimed = aimDelta != null && Math.abs(aimDelta) <= 18;
 
-  // AI 생성 몬스터 GLB (asset-forge active=true 일 때만 로드).
-  const generatedMonster = useGeneratedModel("monster");
+  // AI 생성 몬스터 GLB — spawn monster_key 프롬프트 매칭, 없으면 kind=monster 기본 active.
+  const generatedMonster = useGeneratedModel("monster", activeSpawn?.monster_key ?? null);
 
-  // ── 객체 인식 (Phase 1: 발견 상태에서만 동작, 보조 anchoring) ──
-  // 카메라가 ready 이고 활성 spawn 이 발견 상태일 때만 검출 워커 활성화.
-  // 검출 실패/지원안함은 silent — 게임 핵심 흐름과 분리.
-  const detectorEnabled = camStatus === "ready" && !!activeSpawn && isAimed;
+  // ── 객체 인식 — 조우 중 in_range부터 활성 (aimed만 X) ──
+  const inEncounter = encounterShowsMonster(encounterPhase);
+  const detectorEnabled = camStatus === "ready" && !!activeSpawn && inEncounter;
   const objectDetector = useObjectDetector({
     enabled: detectorEnabled,
-    video: videoRef.current,
+    video: videoEl,
   });
 
   // 600ms 마다 한 번씩 검출 요청.
@@ -294,7 +321,7 @@ export function ARWalkSession(props: Props) {
   // 최신 검출 결과에서 가장 적절한 anchor 픽.
   const screenAnchor = useMemo(() => {
     if (!detectorEnabled) return null;
-    const v = videoRef.current;
+    const v = videoEl;
     if (!v || v.videoWidth === 0 || v.videoHeight === 0) return null;
     const dets = objectDetector.latest;
     if (!dets || dets.length === 0) return null;
@@ -306,7 +333,145 @@ export function ARWalkSession(props: Props) {
       size: best.height / v.videoHeight,
       category: best.category,
     };
-  }, [detectorEnabled, objectDetector.latest]);
+  }, [detectorEnabled, videoEl, objectDetector.latest, objectDetector.latestTs]);
+
+  const handleSelectSpawn = useCallback((spawnId: string) => {
+    setActiveSpawnId(spawnId);
+    const spawn = spawns.find((s) => s.id === spawnId);
+    if (spawn?.in_range) {
+      setEncounterPhase("encounter_enter");
+      encounterStartedAtRef.current = performance.now();
+    }
+  }, [spawns]);
+
+  // in_range 자동 조우 (spawn 선택 없을 때)
+  useEffect(() => {
+    if (encounterPhase !== "walking") return;
+    if (activeSpawnId) return;
+    if (Date.now() < encounterCooldownUntilRef.current) return;
+    const inRange = spawns.filter((s) => s.in_range);
+    if (inRange.length === 0) return;
+    const closest = inRange.reduce((best, s) =>
+      (s.distance_m ?? Infinity) < (best.distance_m ?? Infinity) ? s : best,
+    );
+    setActiveSpawnId(closest.id);
+    setEncounterPhase("encounter_enter");
+    encounterStartedAtRef.current = performance.now();
+  }, [spawns, encounterPhase, activeSpawnId]);
+
+  useEffect(() => {
+    if (encounterPhase !== "encounter_enter") return;
+    const id = window.setTimeout(() => setEncounterPhase("encounter_fight"), ENCOUNTER_ENTER_MS);
+    return () => clearTimeout(id);
+  }, [encounterPhase]);
+
+  useEffect(() => {
+    if (encounterPhase !== "encounter_fight" || !activeSpawn) return;
+    if (activeSpawn.rarity !== "legendary") return;
+    const id = window.setTimeout(() => {
+      setEncounterPhase("fled");
+      fx.captureFlee();
+    }, LEGENDARY_FLEE_MS);
+    return () => clearTimeout(id);
+  }, [encounterPhase, activeSpawn?.id, activeSpawn?.rarity]);
+
+  const resetEncounter = useCallback(() => {
+    setEncounterPhase("walking");
+    setActiveSpawnId(null);
+    setHits(0);
+    aimScoreRef.current = 0.5;
+    encounterCooldownUntilRef.current = Date.now() + 4000;
+  }, []);
+
+  const beginCaptureThrow = useCallback(() => {
+    if (!activeSpawn || isCatching) return;
+    if (aimScoreRef.current < 0.45 && mode === "aim") {
+      fx.miss();
+      toast.info("몬스터를 화면 중앙에 맞춘 뒤 던지세요");
+      return;
+    }
+    setEncounterPhase("capture_throw");
+  }, [activeSpawn, isCatching, mode]);
+
+  const fleeEncounter = useCallback(() => {
+    setEncounterPhase("fled");
+    fx.captureFlee();
+  }, []);
+
+  const startTestEncounter = useCallback(
+    (spawnId?: string) => {
+      encounterCooldownUntilRef.current = 0;
+      aimScoreRef.current = 0.85;
+
+      const inRange = spawns.filter((s) => s.in_range);
+      const target = spawnId
+        ? spawns.find((s) => s.id === spawnId)
+        : inRange.length > 0
+          ? inRange.reduce((best, s) =>
+              (s.distance_m ?? Infinity) < (best.distance_m ?? Infinity) ? s : best,
+            )
+          : spawns[0];
+
+      if (!target?.in_range) return false;
+
+      setActiveSpawnId(target.id);
+      setEncounterPhase("encounter_enter");
+      encounterStartedAtRef.current = performance.now();
+      const name = monsterByKey(target.monster_key)?.name ?? target.monster_key;
+      toast.success(`테스트 조우: ${name}`);
+      return true;
+    },
+    [spawns],
+  );
+
+  const handleDebugTestEncounter = useCallback(() => {
+    if (WALK_MONSTER_DEBUG_ENABLED && !userPos) {
+      onDebugMockLocation?.();
+    } else if (!effectiveUserPos) {
+      toast.info("위치 권한을 허용한 뒤 다시 눌러 주세요");
+      onRefreshPosition();
+      return;
+    }
+    if (startTestEncounter()) return;
+    setPendingDebugEncounter(true);
+    onForceSpawn?.(
+      WALK_MONSTER_DEBUG_ENABLED && !userPos ? { ...WALK_MONSTER_DEBUG_POS } : undefined,
+    );
+    toast.info("테스트 몬스터 생성 중… 잠시 후 조우가 시작됩니다");
+  }, [
+    userPos,
+    effectiveUserPos,
+    startTestEncounter,
+    onForceSpawn,
+    onRefreshPosition,
+    onDebugMockLocation,
+  ]);
+
+  const handleDebugSpawnAllMonsters = useCallback(() => {
+    if (WALK_MONSTER_DEBUG_ENABLED && !userPos) {
+      onDebugMockLocation?.();
+    } else if (!effectiveUserPos) {
+      toast.info("위치 권한을 허용한 뒤 다시 눌러 주세요");
+      onRefreshPosition();
+      return;
+    }
+    onForceSpawnAll?.(
+      WALK_MONSTER_DEBUG_ENABLED && !userPos ? { ...WALK_MONSTER_DEBUG_POS } : undefined,
+    );
+  }, [userPos, effectiveUserPos, onForceSpawnAll, onRefreshPosition, onDebugMockLocation]);
+
+  useEffect(() => {
+    if (!pendingDebugEncounter) return;
+    if (startTestEncounter()) {
+      setPendingDebugEncounter(false);
+    }
+  }, [spawns, pendingDebugEncounter, startTestEncounter]);
+
+  useEffect(() => {
+    if (encounterPhase !== "fled") return;
+    const id = window.setTimeout(resetEncounter, 2600);
+    return () => clearTimeout(id);
+  }, [encounterPhase, resetEncounter]);
 
   // active spawn 바뀌면 hits 초기화 + 기본 모드 재설정.
   useEffect(() => {
@@ -316,13 +481,13 @@ export function ARWalkSession(props: Props) {
 
   // ── 가장 가까운 미in_range 스폰 (안내용) ─────────────────────
   const closestApproach = useMemo(() => {
-    if (!userPos) return null;
+    if (!effectiveUserPos) return null;
     const outOfRange = spawns.filter((s) => !s.in_range);
     if (outOfRange.length === 0) return null;
     return outOfRange.reduce((best, s) =>
       (s.distance_m ?? Infinity) < (best.distance_m ?? Infinity) ? s : best,
     );
-  }, [spawns, userPos]);
+  }, [spawns, effectiveUserPos]);
 
   // ── Rhythm 비트 ──────────────────────────────────────────────
   const beatRef = useRef({ lastBeatAt: 0, nextBeatAt: 0 });
@@ -354,11 +519,13 @@ export function ARWalkSession(props: Props) {
   const handleAim = useCallback(
     (hit: boolean) => {
       if (!activeSpawn || isCatching) return;
+      if (encounterPhase === "capture_throw" || encounterPhase === "capturing") return;
+
       let counted = false;
       if (mode === "aim") {
-        counted = hit;
+        counted = hit && aimScoreRef.current >= 0.5;
       } else if (mode === "tap") {
-        counted = true;
+        counted = hit;
       } else if (mode === "rhythm") {
         const now = performance.now();
         const closestBeat =
@@ -368,19 +535,40 @@ export function ARWalkSession(props: Props) {
         const inWindow = Math.abs(now - closestBeat) <= RHYTHM_WINDOW_MS;
         counted = inWindow && hit;
       }
-      if (!counted) return;
+      if (!counted) {
+        if (mode === "aim") fx.miss();
+        return;
+      }
 
+      if (encounterPhase === "encounter_fight") {
+        beginCaptureThrow();
+        return;
+      }
+
+      setEncounterPhase("capturing");
       setHits((prev) => {
         const next = prev + 1;
         if (next >= hitsRequired) {
-          // 부모 mutation → onCatch 안에서 success/fail 핸들.
           onCatch(activeSpawn, useOrb);
+          setEncounterPhase("caught");
+          window.setTimeout(resetEncounter, 2200);
           return 0;
         }
+        setEncounterPhase("encounter_fight");
         return next;
       });
     },
-    [activeSpawn, isCatching, mode, hitsRequired, useOrb, onCatch],
+    [
+      activeSpawn,
+      isCatching,
+      mode,
+      hitsRequired,
+      useOrb,
+      onCatch,
+      encounterPhase,
+      beginCaptureThrow,
+      resetEncounter,
+    ],
   );
 
   // ── Render ───────────────────────────────────────────────────
@@ -393,6 +581,28 @@ export function ARWalkSession(props: Props) {
   // ── 현재 컨텍스트 결정 ─────────────────────────────────────
   // 향후 fishing/pet/coop 모드 추가 시 이 함수만 확장하면 HUD 가 자동으로 바뀐다.
   const gameContext: GameContext = useMemo(() => {
+    if (encounterPhase === "caught" && activeSpawn && def) {
+      return { kind: "caught", monster: activeSpawn, monsterName: def.name };
+    }
+    if (encounterPhase === "fled" && activeSpawn) {
+      return { kind: "fled", monster: activeSpawn };
+    }
+    if (encounterPhase === "encounter_enter" && activeSpawn) {
+      return { kind: "encounter", monster: activeSpawn, phase: "enter" };
+    }
+    if (encounterPhase === "encounter_fight" && activeSpawn) {
+      return { kind: "encounter", monster: activeSpawn, phase: "fight" };
+    }
+    if (encounterPhase === "capture_throw" && activeSpawn) {
+      return { kind: "encounter", monster: activeSpawn, phase: "throw" };
+    }
+    if (encounterPhase === "capturing" && activeSpawn) {
+      return {
+        kind: "capturing",
+        monster: activeSpawn,
+        progress: hits / Math.max(1, hitsRequired),
+      };
+    }
     if (!activeSpawn) return { kind: "walking" };
     if (!isAimed) {
       const dir: "left" | "right" | "center" =
@@ -406,7 +616,7 @@ export function ARWalkSession(props: Props) {
       return { kind: "hiding", monster: activeSpawn, direction: dir };
     }
     return { kind: "aimed", monster: activeSpawn, captureMode: mode };
-  }, [activeSpawn?.id, isAimed, aimDelta, mode]);
+  }, [activeSpawn?.id, isAimed, aimDelta, mode, encounterPhase, hits, hitsRequired, def?.name]);
 
   // ── 액션 매핑 ─────────────────────────────────────────────────
   // blueprint 의 ActionId → 실제 React handler + 아이콘으로 변환.
@@ -427,12 +637,19 @@ export function ARWalkSession(props: Props) {
     } else if (id === "attack") {
       handler = () => {
         if (isCatching) return;
-        // aim 모드: raycaster 가 hit 판정. 사용자가 몬스터를 화면 정중앙에
-        // 두고 있다고 가정해 (0.5,0.5) 좌표로 trigger.
-        // tap/rhythm: 항상 true.
-        handleAim(true);
+        if (gameContext.kind === "caught") {
+          resetEncounter();
+          return;
+        }
+        handleAim(aimScoreRef.current >= 0.5);
       };
       icon = <Sword className="h-6 w-6" />;
+    } else if (id === "encounter_throw") {
+      handler = () => beginCaptureThrow();
+      icon = <Sparkles className="h-6 w-6" />;
+    } else if (id === "encounter_flee") {
+      handler = () => fleeEncounter();
+      icon = <X className="h-5 w-5" />;
     }
     return {
       label: blueprint.primary.label,
@@ -443,10 +660,10 @@ export function ARWalkSession(props: Props) {
       holdable: blueprint.primary.holdable,
       pulse: blueprint.primary.pulse,
       disabled:
-        (id === "force_spawn" && (!!isSpawning || !userPos)) ||
+        (id === "force_spawn" && (!!isSpawning || !effectiveUserPos)) ||
         (id === "attack" && isCatching),
     };
-  }, [blueprint, isCatching, isSpawning, userPos, handleAim, onForceSpawn]);
+  }, [blueprint, isCatching, isSpawning, effectiveUserPos, handleAim, onForceSpawn, gameContext.kind, beginCaptureThrow, fleeEncounter, resetEncounter]);
 
   const secondaries: SecondaryAction[] = useMemo(() => {
     const items: SecondaryAction[] = [];
@@ -501,13 +718,21 @@ export function ARWalkSession(props: Props) {
             onPress: onExit,
           });
           break;
+        case "encounter_flee":
+          items.push({
+            id,
+            label: "도주",
+            icon: <X className="h-4 w-4" />,
+            onPress: fleeEncounter,
+          });
+          break;
         default:
           // 미래 모드 (fishing_*, pet_*, coop_*) — 핸들러는 그 모드 도입 시 wiring
           break;
       }
     }
     return items;
-  }, [blueprint, mode, inventory, cycleMode, onRefreshPosition, onExit]);
+  }, [blueprint, mode, inventory, cycleMode, onRefreshPosition, onExit, fleeEncounter]);
 
   const centerHint = useMemo(() => centerHintText(blueprint.centerHintKey, blueprint.centerHintArgs), [blueprint]);
 
@@ -515,7 +740,10 @@ export function ARWalkSession(props: Props) {
     <div className="fixed inset-0 z-40 flex flex-col bg-black">
       {/* 카메라 비디오 */}
       <video
-        ref={videoRef}
+        ref={(el) => {
+          videoRef.current = el;
+          setVideoEl(el);
+        }}
         className={cn(
           "absolute inset-0 h-full w-full object-cover",
           camStatus !== "ready" && "opacity-0",
@@ -554,7 +782,7 @@ export function ARWalkSession(props: Props) {
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/55" />
 
           {/* 3D AR scene */}
-          {activeSpawn && userPos && (
+          {activeSpawn && effectiveUserPos && encounterShowsMonster(encounterPhase) && (
             <Suspense fallback={null}>
               <MonsterArScene
                 monsterKey={activeSpawn.monster_key}
@@ -565,28 +793,61 @@ export function ARWalkSession(props: Props) {
                 onAim={handleAim}
                 monsterName={def?.name}
                 bearingDeg={bearingDeg(
-                  userPos.lat,
-                  userPos.lng,
+                  effectiveUserPos.lat,
+                  effectiveUserPos.lng,
                   activeSpawn.latitude,
                   activeSpawn.longitude,
                 )}
+                bearingDeltaDeg={aimDelta}
                 distanceM={
                   activeSpawn.distance_m ??
-                  haversineM(userPos.lat, userPos.lng, activeSpawn.latitude, activeSpawn.longitude)
+                  haversineM(
+                    effectiveUserPos.lat,
+                    effectiveUserPos.lng,
+                    activeSpawn.latitude,
+                    activeSpawn.longitude,
+                  )
                 }
                 compassHeading={smoothedHeadingRef.current}
                 screenAnchor={
                   screenAnchor
-                    ? { x: screenAnchor.x, y: screenAnchor.y, size: screenAnchor.size }
+                    ? {
+                        x: screenAnchor.x,
+                        y: screenAnchor.y,
+                        size: screenAnchor.size,
+                        category: screenAnchor.category,
+                      }
                     : null
                 }
+                devicePitchRad={((offset.y + 40) / 1200) * (Math.PI / 2)}
+                onAimScoreChange={(score) => {
+                  aimScoreRef.current = score;
+                }}
+                forceVisible={encounterPhase !== "walking"}
                 glbUrl={generatedMonster.glbUrl ?? null}
               />
             </Suspense>
           )}
 
+          <CaptureThrowOverlay
+            active={encounterPhase === "capture_throw" && !!activeSpawn && !!def}
+            rarity={activeSpawn?.rarity ?? "common"}
+            monsterName={def?.name ?? "몬스터"}
+            onCaptureSuccess={() => {
+              if (!activeSpawn) return;
+              setEncounterPhase("capturing");
+              onCatch(activeSpawn, useOrb);
+              setEncounterPhase("caught");
+              window.setTimeout(resetEncounter, 2200);
+            }}
+            onFlee={fleeEncounter}
+            onMiss={() => {
+              /* overlay tracks miss → flee at 5 */
+            }}
+          />
+
           {/* 활성 spawn 라벨 + HP 바 (몬스터 위 작게) */}
-          {activeSpawn && def && meta && isAimed && (
+          {activeSpawn && def && meta && inEncounter && encounterPhase === "encounter_fight" && (
             <div className="pointer-events-none absolute left-0 right-0 top-20 z-10 flex flex-col items-center px-4 text-center">
               <p className="text-base font-semibold text-white drop-shadow-md">
                 {def.name}
@@ -608,13 +869,18 @@ export function ARWalkSession(props: Props) {
           )}
 
           {/* 시야 밖 몬스터 방향 화살표 — 사이드 가장자리에만 */}
-          {userPos &&
+          {effectiveUserPos &&
             smoothedHeadingRef.current != null &&
             spawns
               .filter((s) => s.id !== activeSpawn?.id)
               .slice(0, 4)
               .map((s) => {
-                const bearing = bearingDeg(userPos.lat, userPos.lng, s.latitude, s.longitude);
+                const bearing = bearingDeg(
+                  effectiveUserPos.lat,
+                  effectiveUserPos.lng,
+                  s.latitude,
+                  s.longitude,
+                );
                 const delta = bearingDelta(smoothedHeadingRef.current!, bearing);
                 if (Math.abs(delta) < 30) return null;
                 const isLeft = delta < 0;
@@ -693,6 +959,40 @@ export function ARWalkSession(props: Props) {
             <Progress value={progressPct} className="mt-1 h-1.5 bg-white/15" />
           </div>
 
+          {WALK_MONSTER_DEBUG_ENABLED && (
+            <div className="pointer-events-none absolute bottom-[7.5rem] left-3 z-30 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={handleDebugTestEncounter}
+                disabled={isSpawning || isCatching}
+                className="pointer-events-auto rounded-full border border-amber-400/50 bg-amber-500/90 px-4 py-2 text-xs font-semibold text-amber-950 shadow-lg backdrop-blur-sm active:scale-95 disabled:opacity-50"
+              >
+                {isSpawning ? "스폰 중…" : "🧪 테스트 조우"}
+              </button>
+              <button
+                type="button"
+                onClick={handleDebugSpawnAllMonsters}
+                disabled={isSpawning || isCatching}
+                className="pointer-events-auto rounded-full border border-emerald-400/50 bg-emerald-500/90 px-4 py-2 text-xs font-semibold text-emerald-950 shadow-lg backdrop-blur-sm active:scale-95 disabled:opacity-50"
+              >
+                {isSpawning ? "생성 중…" : "🧪 몬스터 8종 생성"}
+              </button>
+              {inEncounter && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    aimScoreRef.current = 0.9;
+                    setEncounterPhase("capture_throw");
+                    toast.info("던지기 단계 — 위로 스와이프");
+                  }}
+                  className="pointer-events-auto rounded-full border border-white/25 bg-black/60 px-3 py-1.5 text-[10px] font-medium text-white backdrop-blur-sm"
+                >
+                  → 던지기 단계
+                </button>
+              )}
+            </div>
+          )}
+
           {/* ── 게임패드 HUD ── */}
           <GameHUD
             primary={primary}
@@ -744,12 +1044,15 @@ export function ARWalkSession(props: Props) {
             <div className="rounded-2xl border border-border/60 p-4">
               <h3 className="mb-2 text-center text-sm font-medium text-foreground/70">레이더</h3>
               <SpawnRadarMap
-                userLat={userPos?.lat ?? null}
-                userLng={userPos?.lng ?? null}
+                userLat={effectiveUserPos?.lat ?? null}
+                userLng={effectiveUserPos?.lng ?? null}
                 spawns={spawns}
                 catchRadiusM={profile.catch_radius_m}
+                selectedSpawnId={activeSpawnId}
+                onSelectSpawn={handleSelectSpawn}
               />
             </div>
+            <GameDexPanel totalCatches={profile.total_catches} level={profile.level} />
             <GameInventoryPanel inventory={inventory} coins={profile.coins} />
             <GameLeaderboard />
             <div className="grid grid-cols-2 gap-2">

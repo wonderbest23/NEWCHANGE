@@ -17,6 +17,8 @@ type Props = {
   userLng: number | null;
   spawns: SpawnPin[];
   catchRadiusM: number;
+  selectedSpawnId?: string | null;
+  onSelectSpawn?: (spawnId: string) => void;
 };
 
 // Google Maps Static API 키가 env 에 있으면 위성/지도 배경 타일을 깔고,
@@ -42,7 +44,14 @@ function staticMapUrl(lat: number, lng: number, sizePx: number): string | null {
   return `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
 }
 
-export function SpawnRadarMap({ userLat, userLng, spawns, catchRadiusM }: Props) {
+export function SpawnRadarMap({
+  userLat,
+  userLng,
+  spawns,
+  catchRadiusM,
+  selectedSpawnId,
+  onSelectSpawn,
+}: Props) {
   const size = 220;
   const center = size / 2;
   const scale = (size / 2 - 16) / RADAR_RANGE_M;
@@ -101,17 +110,20 @@ export function SpawnRadarMap({ userLat, userLng, spawns, catchRadiusM }: Props)
         const def = monsterByKey(s.monster_key);
         if (x < 8 || x > size - 8 || y < 8 || y > size - 8) return null;
         return (
-          <div
+          <button
             key={s.id}
+            type="button"
+            onClick={() => onSelectSpawn?.(s.id)}
             className={cn(
-              "absolute flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-lg shadow-md",
+              "absolute flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-lg shadow-md transition active:scale-95",
               s.in_range ? "bg-primary/90 ring-2 ring-white" : "bg-background/90 ring-1 ring-border",
+              selectedSpawnId === s.id && "ring-2 ring-amber-400 scale-110",
             )}
             style={{ left: x, top: y }}
             title={def?.name ?? s.monster_key}
           >
             {def?.emoji ?? "?"}
-          </div>
+          </button>
         );
       })}
       <p className="absolute -bottom-6 left-0 right-0 text-center text-[10px] text-foreground/50">

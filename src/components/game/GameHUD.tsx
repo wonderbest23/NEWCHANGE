@@ -1,3 +1,18 @@
+import { useState, type PointerEvent, type ReactNode } from "react";
+import {
+  Backpack,
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  LogOut,
+  MapPin,
+  Waves,
+  Worm,
+} from "lucide-react";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import type { FishingPhase, PrimaryAction, PrimaryTone, SecondaryAction } from "@/lib/game/action-context";
+
 /**
  * GameHUD — AR 화면 위에 떠 있는 게임패드형 컨트롤.
  *
@@ -20,10 +35,6 @@
  *
  * 모든 props 는 optional. null/undefined 인 zone 은 안 그림.
  */
-
-import { type ReactNode } from "react";
-import { cn } from "@/lib/utils";
-import type { PrimaryAction, PrimaryTone, SecondaryAction } from "@/lib/game/action-context";
 
 interface GameHUDProps {
   primary?: PrimaryAction | null;
@@ -109,7 +120,7 @@ const TONE_RING: Record<PrimaryTone, string> = {
 
 function PrimaryStick({ action }: { action: PrimaryAction }) {
   const tone = action.tone ?? "primary";
-  const handlePointerDown = (e: React.PointerEvent) => {
+  const handlePointerDown = (e: PointerEvent<HTMLButtonElement>) => {
     e.preventDefault();
     if (action.disabled) return;
     action.onPress?.();
@@ -178,6 +189,289 @@ function PrimaryStick({ action }: { action: PrimaryAction }) {
 }
 
 // ── Secondary dot — 우측 작은 원형 ───────────────────────────────────
+
+/** 찌(bobber) 아이콘 — 낚시 primary 버튼 전용 */
+function FishingBobberIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={cn("h-7 w-7", className)}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden
+    >
+      <ellipse cx="12" cy="6" rx="4" ry="3" fill="currentColor" stroke="none" opacity={0.9} />
+      <line x1="12" y1="9" x2="12" y2="20" strokeLinecap="round" />
+      <circle cx="12" cy="21" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export interface FishingSocialItem {
+  icon: ReactNode;
+  text: ReactNode;
+}
+
+export interface FishingHUDProps {
+  phase: FishingPhase;
+  primary: PrimaryAction | null;
+  spotName: string;
+  nearbyPlayers: number;
+  rareBonusPercent?: number;
+  phaseLabel: string;
+  centerHint?: string;
+  socialItem?: FishingSocialItem | null;
+  ephemeralMessage?: string | null;
+  showCastMeter?: boolean;
+  castPower?: number;
+  showBiteFlash?: boolean;
+  rewardBanner?: ReactNode;
+  onExit?: () => void;
+}
+
+/**
+ * 낚시 모드 전용 모바일 HUD — 하단 원형 CTA + 좌우 edge drawer.
+ * walk_monster 등 다른 모드는 GameHUD 를 그대로 사용한다.
+ */
+export function FishingHUD({
+  phase,
+  primary,
+  spotName,
+  nearbyPlayers,
+  rareBonusPercent = 12,
+  phaseLabel,
+  centerHint,
+  socialItem,
+  ephemeralMessage,
+  showCastMeter,
+  castPower = 0,
+  showBiteFlash,
+  rewardBanner,
+  onExit,
+}: FishingHUDProps) {
+  const [leftOpen, setLeftOpen] = useState(false);
+  const [rightOpen, setRightOpen] = useState(false);
+
+  const hintText =
+    centerHint ??
+    (phase === "bite"
+      ? "지금입니다! 챔질하세요"
+      : phase === "fighting"
+        ? "텐션 구간을 유지하세요"
+        : undefined);
+  const showHintPill = !!hintText || phaseLabel.length > 0;
+
+  const closeDrawers = () => {
+    setLeftOpen(false);
+    setRightOpen(false);
+  };
+
+  return (
+    <div className="fishing-hud-root" data-fishing-phase={phase}>
+      <div className="fishing-pov-vignette" aria-hidden />
+      {showBiteFlash && <div className="fishing-bite-flash" aria-hidden />}
+
+      <div className="fishing-hud-ar-zone" aria-hidden />
+
+      <header className="fishing-hud-top">
+        <div className="fishing-glass fishing-hud-chip">
+          <MapPin className="h-3.5 w-3.5 shrink-0 text-cyan-300" />
+          <div className="min-w-0">
+            <p className="truncate text-[11px] font-semibold text-white">{spotName}</p>
+            <p className="text-[10px] text-white/75">
+              같이 낚시 중 <span className="font-bold text-cyan-300">{nearbyPlayers}명</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="fishing-glass fishing-hud-chip fishing-hud-chip-right">
+          <div className="min-w-0 text-right">
+            <p className="text-[11px] font-semibold text-white">물결 보너스 ON</p>
+            <p className="text-[10px] text-white/75">
+              희귀 확률 <span className="font-bold text-cyan-300">+{rareBonusPercent}%</span>
+            </p>
+          </div>
+          <Waves className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+        </div>
+      </header>
+
+      {showHintPill && (
+        <div
+          className={cn(
+            "fishing-hud-hint-row",
+            phase === "bite" && "fishing-bite-pill-shake",
+          )}
+        >
+          <div className="fishing-top-pill fishing-hud-hint-pill">
+            <span className="fishing-hud-phase-tag">{phaseLabel}</span>
+            {hintText && (
+              <>
+                <span className="text-white/35" aria-hidden>
+                  ·
+                </span>
+                <span className="truncate">{hintText}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {socialItem && (
+        <div className="fishing-hud-social">
+          <div className="fishing-social-pill">
+            {socialItem.icon}
+            <span>{socialItem.text}</span>
+          </div>
+        </div>
+      )}
+
+      {showCastMeter && (
+        <div className="fishing-hud-cast-meter pointer-events-none">
+          <div className="fishing-cast-meter" aria-hidden>
+            <div
+              className="fishing-cast-meter-fill"
+              style={{ width: `${castPower * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {rewardBanner}
+
+      {(leftOpen || rightOpen) && (
+        <button
+          type="button"
+          className="fishing-drawer-scrim"
+          aria-label="메뉴 닫기"
+          onClick={closeDrawers}
+        />
+      )}
+
+      <aside
+        className={cn("fishing-edge-tab fishing-edge-tab-left", leftOpen && "open")}
+        aria-label="미끼·가방"
+      >
+        <button
+          type="button"
+          className="fishing-edge-tab-handle"
+          onClick={() => {
+            setRightOpen(false);
+            setLeftOpen((v) => !v);
+          }}
+          aria-expanded={leftOpen}
+        >
+          <ChevronRight className="h-4 w-4" />
+          <span className="fishing-edge-tab-label">미끼</span>
+        </button>
+        <div className="fishing-edge-drawer">
+          <button
+            type="button"
+            className="fishing-drawer-item"
+            onClick={() => {
+              toast.info("미끼 (추후 연결)");
+              closeDrawers();
+            }}
+          >
+            <Worm className="h-4 w-4 text-amber-300" />
+            미끼
+          </button>
+          <button
+            type="button"
+            className="fishing-drawer-item"
+            onClick={() => {
+              toast.info("가방 (추후 연결)");
+              closeDrawers();
+            }}
+          >
+            <Backpack className="h-4 w-4 text-cyan-300" />
+            가방
+          </button>
+        </div>
+      </aside>
+
+      <aside
+        className={cn("fishing-edge-tab fishing-edge-tab-right", rightOpen && "open")}
+        aria-label="도감·나가기"
+      >
+        <button
+          type="button"
+          className="fishing-edge-tab-handle"
+          onClick={() => {
+            setLeftOpen(false);
+            setRightOpen((v) => !v);
+          }}
+          aria-expanded={rightOpen}
+        >
+          <ChevronLeft className="h-4 w-4" />
+          <span className="fishing-edge-tab-label">도감</span>
+        </button>
+        <div className="fishing-edge-drawer">
+          <button
+            type="button"
+            className="fishing-drawer-item"
+            onClick={() => {
+              toast.info("도감 (추후 연결)");
+              closeDrawers();
+            }}
+          >
+            <BookOpen className="h-4 w-4 text-violet-300" />
+            도감
+          </button>
+          <button
+            type="button"
+            className="fishing-drawer-item"
+            onClick={() => {
+              closeDrawers();
+              onExit?.();
+            }}
+          >
+            <LogOut className="h-4 w-4 text-rose-300" />
+            나가기
+          </button>
+        </div>
+      </aside>
+
+      <footer className="fishing-hud-bottom">
+        {ephemeralMessage && (
+          <p className="fishing-hud-ephemeral">{ephemeralMessage}</p>
+        )}
+        <FishingPrimaryButton primary={primary} />
+      </footer>
+    </div>
+  );
+}
+
+function FishingPrimaryButton({ primary }: { primary: PrimaryAction | null }) {
+  const handlePointerDown = (e: PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (primary?.disabled) return;
+    primary?.onPress?.();
+  };
+  const handlePointerUp = () => {
+    if (primary?.disabled) return;
+    primary?.onRelease?.();
+  };
+
+  return (
+    <button
+      type="button"
+      className={cn("fishing-primary-btn", primary?.pulse && "pulse")}
+      disabled={primary?.disabled || !primary}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onPointerLeave={primary?.onRelease ? handlePointerUp : undefined}
+      onClick={() => !primary?.holdable && primary?.onPress?.()}
+      aria-label={primary?.label ?? "시작하기"}
+    >
+      <span className="fishing-primary-btn-icon">
+        <FishingBobberIcon />
+      </span>
+      <span className="fishing-primary-btn-label">{primary?.label ?? "시작하기"}</span>
+    </button>
+  );
+}
 
 function SecondaryDot({ action }: { action: SecondaryAction }) {
   return (

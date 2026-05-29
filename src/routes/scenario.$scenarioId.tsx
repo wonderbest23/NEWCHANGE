@@ -1,9 +1,26 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
+import { requireAuthBeforeLoad } from "@/lib/auth/route-guard";
 import { scenarioById } from "@/lib/scenario/registry";
 
+/** 레거시/오타 URL → registry id */
+const SCENARIO_ID_ALIASES: Record<string, string> = {
+  "walk-monster": "walk_monster",
+};
+
 export const Route = createFileRoute("/scenario/$scenarioId")({
+  ssr: false,
+  beforeLoad: async ({ params, location }) => {
+    const canonicalId = SCENARIO_ID_ALIASES[params.scenarioId] ?? params.scenarioId;
+    if (canonicalId !== params.scenarioId) {
+      throw redirect({
+        to: "/scenario/$scenarioId",
+        params: { scenarioId: canonicalId },
+      });
+    }
+    await requireAuthBeforeLoad({ location });
+  },
   component: ScenarioRoute,
 });
 

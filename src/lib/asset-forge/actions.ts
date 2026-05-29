@@ -21,6 +21,7 @@ import {
   mirrorToStorage,
 } from "@/lib/asset-forge/tripo.server";
 import { buildFinalPrompt } from "@/lib/asset-forge/prompts";
+import { monsterByKey } from "@/lib/game/monsters";
 
 const ASSET_KINDS = [
   "kiosk",
@@ -200,24 +201,45 @@ export const listAssets = createServerFn({ method: "GET" })
     return { ok: true as const, assets: rows ?? [] };
   });
 
-const ActiveSchema = z.object({ kind: z.enum(ASSET_KINDS) });
+const ActiveSchema = z.object({
+  kind: z.enum(ASSET_KINDS),
+  /** walk_monster: monster_key 별 Tripo 프롬프트 매칭 (없으면 kind 기본 active) */
+  monster_key: z.string().min(1).optional(),
+});
+
+async function queryActiveAsset(kind: AssetKind, monsterKey?: string) {
+  const base = () =>
+    supabaseAdmin
+      .from("generated_assets" as never)
+      .select("id, kind, glb_url, preview_url, prompt")
+      .eq("kind", kind)
+      .eq("status", "success")
+      .eq("active", true)
+      .not("glb_url", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+  if (kind === "monster" && monsterKey) {
+    const def = monsterByKey(monsterKey);
+    const needles = [monsterKey, def?.name].filter(
+      (s): s is string => typeof s === "string" && s.length > 0,
+    );
+    for (const needle of needles) {
+      const { data: row } = await base().ilike("prompt", `%${needle}%`).maybeSingle();
+      if (row) return row;
+    }
+  }
+
+  const { data: row } = await base().maybeSingle();
+  return row ?? null;
+}
 
 export const getActiveAsset = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => ActiveSchema.parse(d))
   .handler(async ({ data }) => {
-    // 누구나 success + active 인 모델 조회 가능 (시나리오 클라가 사용)
-    const { data: row } = await supabaseAdmin
-      .from("generated_assets" as never)
-      .select("id, kind, glb_url, preview_url, prompt")
-      .eq("kind", data.kind)
-      .eq("status", "success")
-      .eq("active", true)
-      .not("glb_url", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    return { ok: true as const, asset: row ?? null };
+    const asset = await queryActiveAsset(data.kind, data.monster_key);
+    return { ok: true as const, asset };
   });
 
 const SetActiveSchema = z.object({ asset_id: z.string().uuid(), active: z.boolean() });

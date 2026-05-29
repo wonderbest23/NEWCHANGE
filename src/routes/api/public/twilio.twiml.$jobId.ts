@@ -71,7 +71,12 @@ export const Route = createFileRoute("/api/public/twilio/twiml/$jobId")({
           console.warn("[twilio:twiml] job not found", jobId, job.error);
           return hangupResponse("잘못된 호출입니다. 죄송합니다.");
         }
-        if (job.data.status === "canceled" || job.data.status === "completed") {
+        if (
+          job.data.status === "cancelled" ||
+          job.data.status === "done" ||
+          job.data.status === "failed" ||
+          job.data.status === "no_answer"
+        ) {
           console.warn("[twilio:twiml] job not eligible", jobId, job.data.status);
           return hangupResponse("죄송합니다. 통화를 진행할 수 없습니다.");
         }

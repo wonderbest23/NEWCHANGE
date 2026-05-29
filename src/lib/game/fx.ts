@@ -117,6 +117,55 @@ export const fx = {
     beep({ freq: 220, endFreq: 110, durationMs: 220, type: "sine", gain: 0.1 });
     vibrate(40);
   },
+  /** 캐스트 릴리즈 — 바람 소리형 스윕 (power 0..1) */
+  fishingCastRelease(power = 0.5) {
+    const p = Math.max(0, Math.min(1, power));
+    beep({
+      freq: 140 + p * 80,
+      endFreq: 55 + p * 30,
+      durationMs: 120 + p * 100,
+      type: "sine",
+      gain: 0.07 + p * 0.09,
+    });
+    setTimeout(
+      () =>
+        beep({
+          freq: 320 + p * 200,
+          endFreq: 180,
+          durationMs: 90,
+          type: "triangle",
+          gain: 0.06,
+        }),
+      70,
+    );
+    vibrate([12, 8, 18 + Math.round(p * 22)]);
+  },
+  captureBallThrow(power = 0.5) {
+    const p = Math.max(0, Math.min(1, power));
+    beep({
+      freq: 180 + p * 120,
+      endFreq: 420 + p * 200,
+      durationMs: 100 + p * 80,
+      type: "triangle",
+      gain: 0.1,
+    });
+    vibrate(18);
+  },
+  captureBallHit() {
+    beep({ freq: 640, endFreq: 920, durationMs: 120, type: "square", gain: 0.14 });
+    vibrate(45);
+  },
+  captureBallMiss() {
+    beep({ freq: 160, endFreq: 90, durationMs: 140, type: "sine", gain: 0.07 });
+  },
+  captureWiggle() {
+    beep({ freq: 380, endFreq: 280, durationMs: 80, type: "sawtooth", gain: 0.09 });
+    vibrate([25, 15, 25]);
+  },
+  captureFlee() {
+    beep({ freq: 240, endFreq: 100, durationMs: 280, type: "sine", gain: 0.1 });
+    vibrate([30, 50, 30]);
+  },
 };
 
 function vibrate(pattern: number | number[]): void {

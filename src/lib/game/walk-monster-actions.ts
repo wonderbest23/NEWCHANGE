@@ -6,6 +6,7 @@ import { CATCH_RADIUS_M, haversineM } from "@/lib/game/geo";
 import { GAME_ITEMS, STARTER_ITEMS, type GameItemKey } from "@/lib/game/items";
 import {
   DAILY_CATCH_LIMIT,
+  MONSTERS,
   RARITY_META,
   SPAWN_DISTANCE_M,
   SPAWN_TTL_MIN,
@@ -173,6 +174,23 @@ function offsetSpawnLatLng(lat: number, lng: number): { lat: number; lng: number
   const dLat = (distM / 111_320) * Math.cos(angle);
   const dLng = (distM / (111_320 * Math.cos((lat * Math.PI) / 180))) * Math.sin(angle);
   return { lat: lat + dLat, lng: lng + dLng };
+}
+
+function offsetLatLngAtAngle(
+  lat: number,
+  lng: number,
+  angleRad: number,
+  distM: number,
+): { lat: number; lng: number } {
+  const dLat = (distM / 111_320) * Math.cos(angleRad);
+  const dLng = (distM / (111_320 * Math.cos((lat * Math.PI) / 180))) * Math.sin(angleRad);
+  return { lat: lat + dLat, lng: lng + dLng };
+}
+
+function isWalkMonsterDebugServer(): boolean {
+  return (
+    process.env.NODE_ENV === "development" || process.env.VITE_DEBUG_WALK_MONSTER === "1"
+  );
 }
 
 function enrichSpawns(
@@ -602,6 +620,56 @@ export const forceSpawnNearby = createServerFn({ method: "POST" })
       spawn: row as unknown as SpawnRow,
       distance_m: Math.round(distM),
     };
+  });
+
+/**
+ * 디버그 전용: MONSTERS 8종을 사용자 주변 원형(~29m)에 일괄 스폰.
+ * 기존 활성 스폰은 만료 처리 후 삽입 (쿨다운·5마리 제한 없음).
+ */
+export const forceSpawnAllMonstersDebug = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((data) => ForceSpawnSchema.parse(data))
+  .handler(async ({ context, data }) => {
+    if (!isWalkMonsterDebugServer()) {
+      return { ok: false as const, reason: "debug_disabled" as const };
+    }
+
+    const { supabase, userId } = context;
+    const profile = await ensureProfile(supabase, userId);
+    if (!profile.location_consent_at) {
+      return { ok: false as const, reason: "no_consent" as const };
+    }
+
+    const now = new Date().toISOString();
+    await supabase
+      .from("game_spawns" as any)
+      .update({ status: "expired" })
+      .eq("user_id", userId)
+      .eq("status", "active");
+
+    const expiresAt = new Date(Date.now() + SPAWN_TTL_MIN * 60_000).toISOString();
+    const distM = 29;
+    const rows = MONSTERS.map((monster, i) => {
+      const angle = (2 * Math.PI * i) / MONSTERS.length;
+      const offset = offsetLatLngAtAngle(data.latitude, data.longitude, angle, distM);
+      return {
+        user_id: userId,
+        monster_key: monster.key,
+        rarity: monster.rarity,
+        latitude: offset.lat,
+        longitude: offset.lng,
+        expires_at: expiresAt,
+      };
+    });
+
+    const { data: inserted, error } = await supabase
+      .from("game_spawns" as any)
+      .insert(rows)
+      .select("id, monster_key, rarity, latitude, longitude, status, expires_at, created_at");
+    if (error) throw error;
+
+    const spawns = (inserted ?? []) as SpawnRow[];
+    return { ok: true as const, spawns, count: spawns.length };
   });
 
 export const useWalkMonsterRadarExtender = createServerFn({ method: "POST" })

@@ -1,617 +1,626 @@
-/**
- * FishingArScene — 카메라 영상 위 AR 낚시터.
- *
- * 비주얼 요소:
- *  - 페더드 알파 타원 연못 (custom ShaderMaterial: 가장자리 부드러움 + 표면 노이즈)
- *  - 라디얼 그라데이션 그림자 (연못 바로 아래 — 카메라와 자연 블렌드)
- *  - 가장자리 sprite (작은 물풀 + 반짝임)
- *  - 동적 물결 ring (페이즈별 빈도/크기)
- *  - 3D 찌 (페이즈별 모션: 호버/딥/끌림)
- *  - 낚싯줄 (낚싯대 → 찌; fighting 중 살짝 흔들림)
- *  - 물고기 그림자 (rarity 별 크기/속도)
- *  - 단계별 splash 파티클 (cast/bite/hook/caught/escaped 각각 다른 패턴)
- *  - 잡힘 컷씬 (placeholder fish → AI GLB swap)
- *
- * 성능 가이드:
- *  - DPR clamp ≤ 2
- *  - Points 단일 버퍼 1개로 splash 통합
- *  - 가장자리 sprite 는 InstancedMesh (16개 미만)
- *  - shader 노이즈는 hash 기반 (텍스처 X)
- */
-
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { FishingPhase } from "@/lib/game/action-context";
-import { fx } from "@/lib/game/fx";
+import type { FishKey } from "@/lib/game/useFishingSession";
+import { fishAssetForKey } from "@/lib/game/fishing-assets";
+import { createFishingBobber } from "./fishing/FishingBobber";
+import { createFishShadow } from "./fishing/createFishShadow";
+import { createFishingParticles } from "./fishing/createFishingParticles";
+import { createFishingPond, type PondPhase } from "./fishing/createFishingPond";
+import { createCaughtFishActor } from "./fishing/createCaughtFishActor";
 import {
-  COLOR,
-  POND_CENTER,
-  POND_FRAGMENT_SHADER,
-  POND_RADIUS,
-  POND_VERTEX_SHADER,
-  pondEdgePoint,
-  rippleSpecFor,
-  shadowSpecFor,
-  splashSpecFor,
-  vibratePattern,
-} from "@/lib/game/fishing-visuals";
+  alignRodModelToCameraRig,
+  createProceduralFishingRod,
+  ensureRodTipAnchor,
+  rodRigLayoutForViewport,
+} from "./fishing/createFishingRod";
+import { bobberAimAngles, computeRodMotion } from "./fishing/rodMotion";
+import { isFishingDebugEnabled, shouldUseRodGlb } from "./fishing/fishingRodPolicy";
+import {
+  evaluateRodGlbActivation,
+  logRodGlbActivationFailure,
+  prepareRodGlbMeshes,
+} from "./fishing/rodGlbActivation";
+import { PROCEDURAL_ROD_LENGTH, rodNdcTargetsForTier } from "./fishing/rodScreenLayout";
+import { logRodGripTipNdc, logRodScreenBBox } from "./fishing/rodScreenDebug";
+import { fishingViewportLayout } from "./fishing/fishingViewport";
+
+export type FishingVisualPhase =
+  | FishingPhase
+  | "hook_success"
+  | "fish_breach"
+  | "fish_land"
+  | "fish_flop"
+  | "capture_confirm";
 
 export interface FishingArSceneProps {
-  phase: FishingPhase;
+  phase: FishingVisualPhase;
   bobberX: number;
   bobberY: number;
+  /** 0..1 캐스팅 차지 (casting 중 wind-up) */
+  castPower?: number;
+  /** 0..1 힘겨루기 장력 (fighting 흔들림 강도) */
+  tension?: number;
   fishGlbUrl?: string | null;
+  rodGlbUrl?: string | null;
+  fishKey?: FishKey | null;
   fishRarity?: "common" | "rare" | "legendary";
   showCatch?: boolean;
+  onCinematicDone?: () => void;
+  onDebugModelStatus?: (status: {
+    fish: "idle" | "loaded" | "failed";
+    rod: "idle" | "loading" | "glb" | "procedural" | "failed";
+    fishUrl: string | null;
+    rodUrl: string | null;
+  }) => void;
 }
 
-interface RippleEntry {
-  mesh: THREE.Mesh;
-  mat: THREE.MeshBasicMaterial;
-  bornMs: number;
-  duration: number;
-  maxScale: number;
+function toPondPhase(phase: FishingVisualPhase): PondPhase {
+  if (phase === "spot_select") return "ready";
+  if (phase === "floating") return "waiting";
+  if (
+    phase === "reward" ||
+    phase === "hook_success" ||
+    phase === "fish_breach" ||
+    phase === "fish_land" ||
+    phase === "fish_flop" ||
+    phase === "capture_confirm"
+  ) {
+    return "caught";
+  }
+  if (
+    phase === "ready" ||
+    phase === "casting" ||
+    phase === "waiting" ||
+    phase === "bite" ||
+    phase === "fighting" ||
+    phase === "escaped"
+  ) {
+    return phase;
+  }
+  return "ready";
 }
-
-interface SplashParticle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  age: number;
-  max: number;
-}
-
-const MAX_SPLASH = 160;
 
 export function FishingArScene(props: FishingArSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const phaseRef = useRef<FishingPhase>(props.phase);
-  phaseRef.current = props.phase;
+  const phaseRef = useRef<PondPhase>(toPondPhase(props.phase));
   const bobberRef = useRef({ x: props.bobberX, y: props.bobberY });
-  bobberRef.current = { x: props.bobberX, y: props.bobberY };
-  const fishGlbUrlRef = useRef<string | null>(props.fishGlbUrl ?? null);
-  fishGlbUrlRef.current = props.fishGlbUrl ?? null;
+  const tensionRef = useRef(props.tension ?? 0);
+  const castPowerRef = useRef(props.castPower ?? 0);
   const showCatchRef = useRef(!!props.showCatch);
-  showCatchRef.current = !!props.showCatch;
-  const rarityRef = useRef<"common" | "rare" | "legendary">(props.fishRarity ?? "common");
-  rarityRef.current = props.fishRarity ?? "common";
+  const rodGlbUrlRef = useRef<string | null>(props.rodGlbUrl ?? null);
+  const visualPhaseRef = useRef<FishingVisualPhase>(props.phase);
+  const fishGlbRef = useRef<string | null>(props.fishGlbUrl ?? null);
+  const fishKeyRef = useRef<FishKey | null>(props.fishKey ?? null);
+  const onCinematicDoneRef = useRef<(() => void) | undefined>(props.onCinematicDone);
+  const onDebugModelStatusRef = useRef<FishingArSceneProps["onDebugModelStatus"]>(
+    props.onDebugModelStatus,
+  );
 
-  const stateRef = useRef<{
-    renderer: THREE.WebGLRenderer;
-    scene: THREE.Scene;
-    camera: THREE.OrthographicCamera;
-    pondMat: THREE.ShaderMaterial;
-    pondShadowMat: THREE.MeshBasicMaterial;
-    bobberGroup: THREE.Group;
-    fishShadow: THREE.Mesh;
-    sparkleMesh: THREE.InstancedMesh;
-    plantMesh: THREE.InstancedMesh;
-    ripples: RippleEntry[];
-    splashes: SplashParticle[];
-    splashPoints: THREE.Points;
-    splashPositions: Float32Array;
-    splashColors: Float32Array;
-    splashSizes: Float32Array;
-    splashAttrPos: THREE.BufferAttribute;
-    splashAttrCol: THREE.BufferAttribute;
-    caughtFishGroup: THREE.Group | null;
-    caughtFishStartMs: number;
-    prevPhase: FishingPhase;
-    bobberAnchorPos: { x: number; y: number };
-    biteImpulseAt: number;
-    raf: number;
-    clock: THREE.Clock;
-    lastRippleAt: number;
-  } | null>(null);
+  phaseRef.current = toPondPhase(props.phase);
+  bobberRef.current = { x: props.bobberX, y: props.bobberY };
+  castPowerRef.current = props.castPower ?? 0;
+  tensionRef.current = props.tension ?? 0;
+  showCatchRef.current = !!props.showCatch;
+  rodGlbUrlRef.current = props.rodGlbUrl ?? null;
+  visualPhaseRef.current = props.phase;
+  fishGlbRef.current = props.fishGlbUrl ?? null;
+  fishKeyRef.current = props.fishKey ?? null;
+  onCinematicDoneRef.current = props.onCinematicDone;
+  onDebugModelStatusRef.current = props.onDebugModelStatus;
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const W = container.clientWidth || window.innerWidth;
-    const H = container.clientHeight || window.innerHeight;
 
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(W, H);
-    renderer.setClearColor(0x000000, 0);
-    container.appendChild(renderer.domElement);
+    renderer.setSize(
+      container.clientWidth || window.innerWidth,
+      container.clientHeight || window.innerHeight,
+    );
+    renderer.setClearAlpha(0);
     renderer.domElement.style.position = "absolute";
     renderer.domElement.style.inset = "0";
     renderer.domElement.style.pointerEvents = "none";
+    container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(0, 1, 1, 0, -10, 10);
-
-    // ── 연못 아래 라디얼 그림자 (카메라와 자연 블렌드) ──
-    const pondShadowMat = new THREE.MeshBasicMaterial({
-      color: 0x000000,
-      transparent: true,
-      opacity: 0.32,
-      depthWrite: false,
-    });
-    const pondShadow = new THREE.Mesh(new THREE.CircleGeometry(0.55, 64), pondShadowMat);
-    pondShadow.scale.set(1.1, 0.38, 1);
-    pondShadow.position.set(POND_CENTER.x, POND_CENTER.y - 0.03, -1.5);
-    scene.add(pondShadow);
-
-    // ── 페더드 알파 연못 (shader) ──
-    const pondMat = new THREE.ShaderMaterial({
-      vertexShader: POND_VERTEX_SHADER,
-      fragmentShader: POND_FRAGMENT_SHADER,
-      transparent: true,
-      depthWrite: false,
-      uniforms: {
-        uTime: { value: 0 },
-        uCore: { value: COLOR.pondCore },
-        uRim: { value: COLOR.pondRim },
-        uOpacity: { value: 0.45 },
-      },
-    });
-    const pond = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, 32, 32), pondMat);
-    pond.scale.set(POND_RADIUS.rx * 2, POND_RADIUS.ry * 2, 1);
-    pond.position.set(POND_CENTER.x, POND_CENTER.y, -1);
-    scene.add(pond);
-
-    // ── 가장자리 sprite: 물풀 (초록 작은 점) + 반짝임 (노란 작은 점) ──
-    const plantCount = 14;
-    const plantGeo = new THREE.CircleGeometry(0.006, 8);
-    const plantMat = new THREE.MeshBasicMaterial({
-      color: COLOR.plant,
-      transparent: true,
-      opacity: 0.65,
-      depthWrite: false,
-    });
-    const plantMesh = new THREE.InstancedMesh(plantGeo, plantMat, plantCount);
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < plantCount; i++) {
-      const angle = (i / plantCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.2;
-      const inset = 0.02 + Math.random() * 0.04;
-      const p = pondEdgePoint(angle, -inset); // 가장자리 바깥쪽
-      const wob = 1 + Math.random() * 1.5;
-      dummy.position.set(p.x, p.y + 0.005, -0.7);
-      dummy.scale.set(wob, wob * 1.2, 1);
-      dummy.updateMatrix();
-      plantMesh.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(plantMesh);
-
-    const sparkleCount = 16;
-    const sparkleGeo = new THREE.CircleGeometry(0.005, 8);
-    const sparkleMat = new THREE.MeshBasicMaterial({
-      color: COLOR.sparkle,
-      transparent: true,
-      opacity: 0.5,
-      depthWrite: false,
-    });
-    const sparkleMesh = new THREE.InstancedMesh(sparkleGeo, sparkleMat, sparkleCount);
-    scene.add(sparkleMesh);
-
-    // ── 찌 ──
-    const bobberGroup = new THREE.Group();
-    const bobBody = new THREE.Mesh(
-      new THREE.SphereGeometry(0.013, 20, 16),
-      new THREE.MeshBasicMaterial({ color: COLOR.bobberBody }),
+    const camera = new THREE.PerspectiveCamera(
+      66,
+      (container.clientWidth || 1) / Math.max(1, container.clientHeight || 1),
+      0.02,
+      28,
     );
-    const bobTip = new THREE.Mesh(
-      new THREE.SphereGeometry(0.007, 14, 12),
-      new THREE.MeshBasicMaterial({ color: COLOR.bobberTip }),
-    );
-    bobTip.position.y = 0.011;
-    bobberGroup.add(bobBody);
-    bobberGroup.add(bobTip);
-    bobberGroup.position.set(0.5, 0.3, 0);
-    bobberGroup.visible = false;
-    scene.add(bobberGroup);
+    // 원점 고정 시 근거리 오브젝트가 frustum 밖으로 나가므로 살짝 뒤로 둔다.
+    camera.position.set(0, 0.08, 0.72);
+    camera.lookAt(0, -0.42, -2.6);
+    scene.add(camera);
 
-    // ── 물고기 그림자 ──
-    const fishShadow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.04, 36),
-      new THREE.MeshBasicMaterial({
-        color: COLOR.shadow,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-      }),
-    );
-    fishShadow.position.set(0.5, 0.2, -0.6);
-    scene.add(fishShadow);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.78));
+    const dir = new THREE.DirectionalLight(0xe0f2fe, 0.85);
+    dir.position.set(1.4, 2.3, 1.8);
+    scene.add(dir);
+    const rodFill = new THREE.DirectionalLight(0xfff7ed, 0.55);
+    rodFill.position.set(0.2, 0.6, 0.5);
+    camera.add(rodFill);
 
-    // ── splash particles (단일 Points 버퍼) ──
-    const splashPositions = new Float32Array(MAX_SPLASH * 3);
-    const splashColors = new Float32Array(MAX_SPLASH * 3);
-    const splashSizes = new Float32Array(MAX_SPLASH);
-    for (let i = 0; i < MAX_SPLASH; i++) {
-      splashPositions[i * 3 + 1] = -10;
-      splashSizes[i] = 0.012;
-    }
-    const splashGeo = new THREE.BufferGeometry();
-    const splashAttrPos = new THREE.BufferAttribute(splashPositions, 3);
-    const splashAttrCol = new THREE.BufferAttribute(splashColors, 3);
-    splashGeo.setAttribute("position", splashAttrPos);
-    splashGeo.setAttribute("color", splashAttrCol);
-    const splashMat = new THREE.PointsMaterial({
-      size: 0.013,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.95,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
+    const pond = createFishingPond();
+    const bobber = createFishingBobber();
+    const fishShadow = createFishShadow();
+    const particles = createFishingParticles();
+    const fishAsset = fishAssetForKey(fishKeyRef.current);
+    const caughtActor = createCaughtFishActor({
+      preset: fishAsset?.animationPreset ?? "fish_flop_default",
+      defaultScale: fishAsset?.scale ?? 0.9,
+      floorY: -0.62,
     });
-    const splashPoints = new THREE.Points(splashGeo, splashMat);
-    splashPoints.position.z = -0.3;
-    scene.add(splashPoints);
+    scene.add(pond.mesh);
+    scene.add(fishShadow.mesh);
+    scene.add(particles.points);
+    scene.add(caughtActor.group);
+    const rodAnchor = new THREE.Group();
+    rodAnchor.frustumCulled = false;
+    rodAnchor.visible = true;
+    rodAnchor.renderOrder = 12;
+    camera.add(rodAnchor);
 
-    stateRef.current = {
-      renderer,
-      scene,
-      camera,
-      pondMat,
-      pondShadowMat,
-      bobberGroup,
-      fishShadow,
-      sparkleMesh,
-      plantMesh,
-      ripples: [],
-      splashes: [],
-      splashPoints,
-      splashPositions,
-      splashColors,
-      splashSizes,
-      splashAttrPos,
-      splashAttrCol,
-      caughtFishGroup: null,
-      caughtFishStartMs: 0,
-      prevPhase: props.phase,
-      bobberAnchorPos: { x: props.bobberX, y: props.bobberY },
-      biteImpulseAt: 0,
-      raf: 0,
-      clock: new THREE.Clock(),
-      lastRippleAt: 0,
+    const debugFishing = isFishingDebugEnabled();
+    let debugRodLogCooldown = 0;
+
+    const loader = new GLTFLoader();
+    let rodObject: THREE.Object3D | null = null;
+    let proceduralRod: ReturnType<typeof createProceduralFishingRod> | null = null;
+    let usingProceduralRod = false;
+    let disposed = false;
+    let rodStatus: "idle" | "loading" | "glb" | "procedural" | "failed" = "idle";
+    let fishStatus: "idle" | "loaded" | "failed" = "idle";
+    let lastFishUrl: string | null = null;
+    let lastRodUrl: string | null = rodGlbUrlRef.current ?? null;
+    let rodLoadInFlight: string | null = null;
+    const emitStatus = () => {
+      onDebugModelStatusRef.current?.({
+        fish: fishStatus,
+        rod: rodStatus,
+        fishUrl: lastFishUrl,
+        rodUrl: lastRodUrl,
+      });
+    };
+    const bindBobberToTip = (tip: THREE.Object3D | null) => {
+      bobber.attachToRodTip(tip);
     };
 
-    const ro = new ResizeObserver(() => {
+    const disposeGlbRod = () => {
+      if (!rodObject) return;
+      rodAnchor.remove(rodObject);
+      rodObject.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const mat = mesh.material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat?.dispose();
+      });
+      rodObject = null;
+    };
+
+    const ensureProceduralRod = () => {
+      if (disposed) return;
+      if (!proceduralRod) {
+        proceduralRod = createProceduralFishingRod();
+        rodAnchor.add(proceduralRod.group);
+        usingProceduralRod = true;
+        rodStatus = "procedural";
+        emitStatus();
+      }
+      proceduralRod.group.visible = rodStatus !== "glb";
+      rodAnchor.visible = true;
+      bindBobberToTip(proceduralRod.tipAnchor);
+    };
+
+    const preferProceduralRod = () => {
+      disposeGlbRod();
+      usingProceduralRod = false;
+      ensureProceduralRod();
+    };
+
+    const rodBasePos = new THREE.Vector3();
+    const rodBaseRot = new THREE.Euler(0, 0, 0, "YXZ");
+    const rodBaseQuat = new THREE.Quaternion();
+    const rodMotionQuat = new THREE.Quaternion();
+    const rodMotionEuler = new THREE.Euler(0, 0, 0, "YXZ");
+    let rodBaseScale = 1;
+    let rodMotionScale = 1;
+
+    const applyRodAnchorLayout = (layout: ReturnType<typeof fishingViewportLayout>) => {
+      const rig = layout.rod;
+      rodBasePos.copy(rig.position);
+      rodBaseRot.copy(rig.rotation);
+      rodBaseQuat.copy(rig.quaternion);
+      rodBaseScale = rig.scale;
+      rodMotionScale = layout.rodMotionScale;
+      rodAnchor.position.copy(rodBasePos);
+      rodAnchor.quaternion.copy(rodBaseQuat);
+      rodAnchor.scale.setScalar(rodBaseScale);
+      if (proceduralRod) {
+        proceduralRod.group.scale.setScalar(layout.rodModelLength / PROCEDURAL_ROD_LENGTH);
+      }
+
+      if (isFishingDebugEnabled()) {
+        camera.updateMatrixWorld(true);
+        rodAnchor.updateMatrixWorld(true);
+        const targets = rodNdcTargetsForTier(layout.tier);
+        logRodGripTipNdc(camera, rodAnchor, layout.rodModelLength, `layout-${layout.tier}`, {
+          grip: targets.gripNdc,
+          tip: targets.tipNdc,
+        });
+      }
+    };
+
+    const tryActivateGlbRod = (candidate: THREE.Object3D, rw: number, rh: number): boolean => {
+      const layout = fishingViewportLayout(rw, rh);
+      applyRodAnchorLayout(layout);
+      camera.updateMatrixWorld(true);
+      rodAnchor.updateMatrixWorld(true);
+
+      alignRodModelToCameraRig(candidate, { targetLength: layout.rodModelLength });
+      prepareRodGlbMeshes(candidate);
+
+      rodAnchor.add(candidate);
+      candidate.updateMatrixWorld(true);
+
+      const activation = evaluateRodGlbActivation(camera, candidate);
+      if (!activation.ok) {
+        rodAnchor.remove(candidate);
+        logRodGlbActivationFailure(activation.reason, {
+          meshCount: activation.meshCount,
+          ndc: activation.ndc,
+          tier: layout.tier,
+        });
+        return false;
+      }
+
+      disposeGlbRod();
+      rodObject = candidate;
+      bindBobberToTip(ensureRodTipAnchor(rodObject));
+      usingProceduralRod = false;
+      rodStatus = "glb";
+      if (proceduralRod) proceduralRod.group.visible = false;
+      emitStatus();
+
+      if (isFishingDebugEnabled()) {
+        const targets = rodNdcTargetsForTier(layout.tier);
+        logRodGripTipNdc(camera, rodAnchor, layout.rodModelLength, `glb-${layout.tier}`, {
+          grip: targets.gripNdc,
+          tip: targets.tipNdc,
+        });
+        logRodScreenBBox(camera, rodObject, `glb-${layout.tier}`);
+      }
+      return true;
+    };
+
+    const loadRod = (url: string) => {
+      const rw = container.clientWidth || window.innerWidth;
+      const rh = container.clientHeight || window.innerHeight;
+      if (!shouldUseRodGlb()) {
+        preferProceduralRod();
+        return;
+      }
+      ensureProceduralRod();
+      rodStatus = "loading";
+      emitStatus();
+      if (rodLoadInFlight === url) return;
+      rodLoadInFlight = url;
+      lastRodUrl = url;
+      loader.load(
+        url,
+        (gltf) => {
+          if (disposed) return;
+          rodLoadInFlight = null;
+          if (!shouldUseRodGlb()) {
+            preferProceduralRod();
+            return;
+          }
+
+          const candidate = gltf.scene.clone(true);
+          if (!tryActivateGlbRod(candidate, rw, rh)) {
+            preferProceduralRod();
+            return;
+          }
+        },
+        undefined,
+        () => {
+          rodLoadInFlight = null;
+          rodStatus = "failed";
+          preferProceduralRod();
+        },
+      );
+    };
+
+    const syncRodSource = () => {
+      ensureProceduralRod();
+      const url = rodGlbUrlRef.current;
+      if (url && shouldUseRodGlb()) loadRod(url);
+    };
+
+    syncRodSource();
+
+    const clock = new THREE.Clock();
+    let raf = 0;
+    let prevPhase: PondPhase = phaseRef.current;
+    let prevVisualPhase: FishingVisualPhase = visualPhaseRef.current;
+    let cinematicStep: "none" | "breach" | "land" | "flop" | "captured" = "none";
+    let cinematicTimer = 0;
+    let didCallDone = false;
+
+    let castSwingElapsed = 0;
+    let prevMotionPhase: PondPhase | "floating" = phaseRef.current;
+    let baseCameraFov = 64;
+    let smoothAimYaw = 0;
+    let smoothAimPitch = 0;
+
+    const updateViewportLayout = () => {
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || window.innerHeight;
+      const layout = fishingViewportLayout(w, h);
+      const floorY = -0.62 + layout.floorYOffset;
+
+      baseCameraFov = layout.camera.fov;
+      camera.fov = baseCameraFov;
+      camera.position.copy(layout.camera.position);
+      camera.lookAt(layout.camera.lookAt);
+      camera.updateProjectionMatrix();
+
+      pond.mesh.position.y = floorY + 0.04;
+      pond.setViewportLayout(layout.pond.meshScale, layout.pond.positionZ);
+      caughtActor.setFloorY(floorY);
+      caughtActor.setViewportLayout(layout.caughtFish);
+      bobber.setPondSurfaceY(floorY + 0.02);
+      bobber.setViewportLayout(layout.bobber);
+      fishShadow.setViewportLayout(layout.fishShadow);
+      fishShadow.setFloorY(floorY);
+
+      applyRodAnchorLayout(layout);
+      if (rodObject && !usingProceduralRod) {
+        alignRodModelToCameraRig(rodObject, { targetLength: layout.rodModelLength });
+        bindBobberToTip(ensureRodTipAnchor(rodObject));
+      }
+    };
+
+    const onResize = () => {
       const w = container.clientWidth || window.innerWidth;
       const h = container.clientHeight || window.innerHeight;
       renderer.setSize(w, h);
-    });
+      camera.aspect = w / Math.max(1, h);
+      camera.updateProjectionMatrix();
+      updateViewportLayout();
+    };
+
+    const ro = new ResizeObserver(onResize);
     ro.observe(container);
 
-    // ── helpers (closure-locked to state) ─────────────────────
-    function emitSplash(kind: "cast_land" | "bite" | "hook" | "caught" | "escaped", at: { x: number; y: number }) {
-      const st = stateRef.current!;
-      const spec = splashSpecFor(kind);
-      for (let i = 0; i < spec.count; i++) {
-        if (st.splashes.length >= MAX_SPLASH) break;
-        const angle = Math.PI + Math.random() * Math.PI;
-        const speed = spec.speedMin + Math.random() * (spec.speedMax - spec.speedMin);
-        st.splashes.push({
-          x: at.x,
-          y: at.y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          age: 0,
-          max: spec.lifetimeMin + Math.random() * (spec.lifetimeMax - spec.lifetimeMin),
-        });
-      }
-    }
-
-    function emitRipple(at: { x: number; y: number }, phase: FishingPhase) {
-      const st = stateRef.current!;
-      const spec = rippleSpecFor(phase);
-      if (spec.intervalMs === 0) return;
-      if (st.ripples.length >= spec.maxAlive) return;
-      const mat = new THREE.MeshBasicMaterial({
-        color: COLOR.ripple,
-        transparent: true,
-        opacity: 0.85,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.014, 0.014 + spec.thickness, 48),
-        mat,
-      );
-      ring.scale.set(1.6, 0.62, 1);
-      ring.position.set(at.x, at.y, -0.4);
-      st.scene.add(ring);
-      st.ripples.push({
-        mesh: ring,
-        mat,
-        bornMs: performance.now(),
-        duration: spec.durationMs,
-        maxScale: spec.maxScale,
-      });
-    }
-
-    function detectPhaseTransition(prev: FishingPhase, next: FishingPhase) {
-      // 사용자 손에 닿는 핵심 전환만 effect 발사
-      if (prev !== "floating" && next === "floating") {
-        emitSplash("cast_land", bobberRef.current);
-        emitRipple(bobberRef.current, "waiting");
-      }
-      if (prev !== "bite" && next === "bite") {
-        emitSplash("bite", bobberRef.current);
-        emitRipple(bobberRef.current, "bite");
-        stateRef.current!.biteImpulseAt = performance.now();
-        fx.fishingBite();
-      }
-      if (prev !== "fighting" && next === "fighting") {
-        emitSplash("hook", bobberRef.current);
-        emitRipple(bobberRef.current, "fighting");
-      }
-      if (prev !== "caught" && next === "caught") {
-        emitSplash("caught", bobberRef.current);
-        fx.fishingCatch();
-        // 두 번 더 살짝 진동
-        setTimeout(() => vibratePattern([20, 40, 20]), 250);
-      }
-      if (prev !== "escaped" && next === "escaped") {
-        emitSplash("escaped", bobberRef.current);
-        fx.fishingEscape();
-      }
-    }
-
-    let lastBobberAnchor = { ...bobberRef.current };
-
     const animate = () => {
-      const st = stateRef.current;
-      if (!st) return;
-      st.raf = requestAnimationFrame(animate);
-      const now = performance.now();
-      const dt = Math.min(0.05, st.clock.getDelta());
-      const tt = now / 1000;
-
+      raf = requestAnimationFrame(animate);
+      const dt = Math.min(0.05, clock.getDelta());
+      const t = performance.now() / 1000;
       const phase = phaseRef.current;
-      const anchor = bobberRef.current;
-
-      // 페이즈 전환 감지
-      if (st.prevPhase !== phase) {
-        detectPhaseTransition(st.prevPhase, phase);
-        st.prevPhase = phase;
+      const visualPhase = visualPhaseRef.current;
+      const rw = container.clientWidth || window.innerWidth;
+      const rh = container.clientHeight || window.innerHeight;
+      const rodUrl = rodGlbUrlRef.current;
+      if (!proceduralRod) ensureProceduralRod();
+      if (rodUrl && rodUrl !== lastRodUrl && shouldUseRodGlb() && rodStatus !== "failed") {
+        rodStatus = "idle";
+        loadRod(rodUrl);
       }
 
-      // 연못 셰이더 시간
-      st.pondMat.uniforms.uTime.value = tt;
-
-      // sparkle 트윙클 — 시간 따라 알파 변화
-      const sparkleMat = st.sparkleMesh.material as THREE.MeshBasicMaterial;
-      sparkleMat.opacity = 0.35 + Math.sin(tt * 2.2) * 0.2;
-      // sparkle 위치 — 가장자리 안쪽에서 천천히 떠도는 듯
-      const dummy = new THREE.Object3D();
-      for (let i = 0; i < 16; i++) {
-        const angle = (i / 16) * Math.PI * 2 + tt * 0.15;
-        const r = 0.65 + Math.sin(tt * 0.7 + i) * 0.12;
-        const x = POND_CENTER.x + Math.cos(angle) * POND_RADIUS.rx * r;
-        const y = POND_CENTER.y + Math.sin(angle) * POND_RADIUS.ry * r * 0.85;
-        dummy.position.set(x, y, -0.5);
-        const s = 0.7 + 0.5 * Math.sin(tt * 3 + i);
-        dummy.scale.setScalar(Math.max(0.4, s));
-        dummy.updateMatrix();
-        st.sparkleMesh.setMatrixAt(i, dummy.matrix);
+      rodAnchor.visible = true;
+      if (proceduralRod) {
+        proceduralRod.group.visible = rodStatus !== "glb";
       }
-      st.sparkleMesh.instanceMatrix.needsUpdate = true;
-
-      // ── 찌 위치 + 페이즈별 모션 ──
-      const showBobber =
-        phase === "floating" ||
-        phase === "waiting" ||
-        phase === "bite" ||
-        phase === "fighting";
-      st.bobberGroup.visible = showBobber;
-
-      if (showBobber) {
-        let bx = anchor.x;
-        let by = anchor.y;
-
-        if (phase === "waiting") {
-          // 천천히 위아래 호버
-          by += Math.sin(tt * 1.6) * 0.006;
-        } else if (phase === "bite") {
-          // 입질 — 강하게 아래로 휙휙
-          const since = now - st.biteImpulseAt;
-          // 0~400ms 사이에 2~3번 dip
-          const dipPhase = (since / 130) % 1;
-          const dip = Math.max(0, Math.sin(dipPhase * Math.PI)) * 0.04;
-          by -= dip;
-          bx += (Math.random() - 0.5) * 0.008;
-        } else if (phase === "fighting") {
-          // 좌우로 끌려다님
-          bx += Math.sin(tt * 4.5) * 0.04;
-          by += Math.sin(tt * 6.5) * 0.012;
+      const activeFishAsset = fishAssetForKey(fishKeyRef.current);
+      const fishModelUrl = fishGlbRef.current ?? activeFishAsset?.modelUrl ?? null;
+      if (fishModelUrl) {
+        if (lastFishUrl !== fishModelUrl) {
+          lastFishUrl = fishModelUrl;
+          fishStatus = "idle";
+          emitStatus();
         }
-
-        st.bobberGroup.position.set(bx, by, 0);
+        caughtActor.loadModel(fishModelUrl);
+      }
+      const nextFishStatus = caughtActor.getLoadStatus();
+      if (nextFishStatus !== fishStatus) {
+        fishStatus = nextFishStatus;
+        emitStatus();
+      }
+      if (activeFishAsset?.animationPreset) {
+        caughtActor.setPreset(activeFishAsset.animationPreset);
+      }
+      if (activeFishAsset?.scale) {
+        caughtActor.setScale(activeFishAsset.scale);
       }
 
-      // ── 물결 자동 emit ──
-      const spec = rippleSpecFor(phase);
-      if (spec.intervalMs > 0 && showBobber) {
-        if (now - st.lastRippleAt > spec.intervalMs) {
-          emitRipple({ x: anchor.x, y: anchor.y }, phase);
-          st.lastRippleAt = now;
+      if (phase !== prevPhase) {
+        if (phase === "bite") navigator.vibrate?.([30, 20, 60]);
+        if (phase === "capture_confirm") {
+          navigator.vibrate?.([50, 30, 80]);
+          particles.splash();
         }
+        if (phase === "escaped") navigator.vibrate?.([20, 60, 20]);
+        prevPhase = phase;
       }
-
-      // ── 물결 update ──
-      for (let i = st.ripples.length - 1; i >= 0; i--) {
-        const r = st.ripples[i];
-        const age = (now - r.bornMs) / r.duration;
-        if (age >= 1) {
-          st.scene.remove(r.mesh);
-          r.mat.dispose();
-          r.mesh.geometry.dispose();
-          st.ripples.splice(i, 1);
-          continue;
+      if (visualPhase !== prevVisualPhase) {
+        didCallDone = false;
+        if (visualPhase === "hook_success") {
+          cinematicStep = "breach";
+          cinematicTimer = 0;
+          caughtActor.setState("breach");
+        } else if (visualPhase === "fish_breach") {
+          cinematicStep = "breach";
+          cinematicTimer = 0;
+          caughtActor.setState("breach");
+        } else if (visualPhase === "fish_land") {
+          cinematicStep = "land";
+          cinematicTimer = 0;
+          caughtActor.setState("land");
+        } else if (visualPhase === "fish_flop") {
+          cinematicStep = "flop";
+          cinematicTimer = 0;
+          caughtActor.setState("flop");
+        } else if (visualPhase === "capture_confirm") {
+          cinematicStep = "captured";
+          cinematicTimer = 0;
+          caughtActor.setState("captured");
+        } else if (visualPhase === "escaped") {
+          cinematicStep = "none";
+          caughtActor.setState("escape");
+        } else if (
+          visualPhase === "waiting" ||
+          visualPhase === "bite" ||
+          visualPhase === "fighting" ||
+          visualPhase === "ready" ||
+          visualPhase === "casting" ||
+          visualPhase === "floating"
+        ) {
+          cinematicStep = "none";
+          caughtActor.setState("hidden");
         }
-        const s = 1 + age * r.maxScale;
-        r.mesh.scale.set(1.6 * s, 0.62 * s, 1);
-        r.mat.opacity = 0.85 * (1 - age) * (1 - age);
+        prevVisualPhase = visualPhase;
       }
 
-      // ── 물고기 그림자 ──
-      const shadowSpec = shadowSpecFor(rarityRef.current);
-      const shadowMat = st.fishShadow.material as THREE.MeshBasicMaterial;
-      st.fishShadow.scale.set(shadowSpec.rx / 0.04, shadowSpec.ry / 0.04, 1);
-      const targetAlpha =
-        phase === "fighting"
-          ? shadowSpec.baseAlpha
-          : phase === "waiting" || phase === "bite"
-            ? shadowSpec.baseAlpha * 0.3
-            : 0;
-      shadowMat.opacity += (targetAlpha - shadowMat.opacity) * Math.min(1, dt * 4);
-      if (shadowMat.opacity > 0.01) {
-        const sway = Math.sin(tt * shadowSpec.speed) * shadowSpec.amplitude;
-        st.fishShadow.position.set(
-          anchor.x + sway,
-          Math.max(POND_CENTER.y - POND_RADIUS.ry * 0.5, anchor.y - 0.08),
-          -0.55,
-        );
-      }
-
-      // ── splash update ──
-      for (const s of st.splashes) {
-        s.age += dt;
-        s.vy -= 1.4 * dt;
-        s.x += s.vx * dt;
-        s.y += s.vy * dt;
-      }
-      st.splashes = st.splashes.filter((s) => s.age < s.max);
-      for (let i = 0; i < MAX_SPLASH; i++) {
-        if (i < st.splashes.length) {
-          const s = st.splashes[i];
-          st.splashPositions[i * 3] = s.x;
-          st.splashPositions[i * 3 + 1] = s.y;
-          st.splashPositions[i * 3 + 2] = -0.3;
-          const fade = 1 - s.age / s.max;
-          st.splashColors[i * 3] = 0.85 + fade * 0.15;
-          st.splashColors[i * 3 + 1] = 0.94;
-          st.splashColors[i * 3 + 2] = 1;
-        } else {
-          st.splashPositions[i * 3 + 1] = -10;
+      if (cinematicStep !== "none") {
+        cinematicTimer += dt;
+        if (cinematicStep === "breach" && cinematicTimer >= 0.58) {
+          cinematicStep = "land";
+          cinematicTimer = 0;
+          caughtActor.setState("land");
+        } else if (cinematicStep === "land" && cinematicTimer >= 0.45) {
+          cinematicStep = "flop";
+          cinematicTimer = 0;
+          caughtActor.setState("flop");
+        } else if (cinematicStep === "flop" && cinematicTimer >= 2.0) {
+          cinematicStep = "captured";
+          cinematicTimer = 0;
+          caughtActor.setState("captured");
+        } else if (cinematicStep === "captured" && cinematicTimer >= 0.66) {
+          cinematicStep = "none";
+          caughtActor.setState("hidden");
+          if (!didCallDone) {
+            onCinematicDoneRef.current?.();
+            didCallDone = true;
+          }
         }
       }
-      st.splashAttrPos.needsUpdate = true;
-      st.splashAttrCol.needsUpdate = true;
 
-      // ── 잡힘 컷씬 ──
-      if (phase === "caught" && showCatchRef.current && !st.caughtFishGroup) {
-        const grp = makeCaughtFishPlaceholder(rarityRef.current);
-        grp.position.set(0.5, 0.3, 0.5);
-        grp.scale.setScalar(0);
-        st.caughtFishGroup = grp;
-        st.caughtFishStartMs = now;
-        st.scene.add(grp);
-        emitSplash("caught", { x: 0.5, y: 0.28 });
+      const pondTension =
+        phase === "fighting" ? tensionRef.current : tensionRef.current * (1 - Math.min(1, dt * 2));
 
-        if (fishGlbUrlRef.current) {
-          const loader = new GLTFLoader();
-          const url = fishGlbUrlRef.current;
-          loader.load(
-            url,
-            (gltf) => {
-              const st2 = stateRef.current;
-              if (!st2 || !st2.caughtFishGroup) return;
-              const g = gltf.scene;
-              const box = new THREE.Box3().setFromObject(g);
-              const sizeVec = new THREE.Vector3();
-              box.getSize(sizeVec);
-              const center = new THREE.Vector3();
-              box.getCenter(center);
-              g.position.sub(center);
-              const maxDim = Math.max(sizeVec.x, sizeVec.y, sizeVec.z);
-              g.scale.setScalar(0.2 / Math.max(0.01, maxDim));
-              while (st2.caughtFishGroup.children.length > 0) {
-                st2.caughtFishGroup.remove(st2.caughtFishGroup.children[0]);
-              }
-              st2.caughtFishGroup.add(g);
-            },
-            undefined,
-            () => null,
-          );
+      const motionPhase: PondPhase | "floating" = visualPhase === "floating" ? "floating" : phase;
+
+      if (motionPhase === "floating" && prevMotionPhase !== "floating") {
+        castSwingElapsed = 0;
+      }
+      if (motionPhase === "floating") {
+        castSwingElapsed += dt;
+      } else if (motionPhase !== "casting") {
+        castSwingElapsed = 0;
+      }
+      prevMotionPhase = motionPhase;
+
+      const aimTarget = bobberAimAngles(bobberRef.current.x, bobberRef.current.y, motionPhase);
+      const aimLerp = Math.min(1, dt * (motionPhase === "bite" ? 14 : 7));
+      smoothAimYaw += (aimTarget.yaw - smoothAimYaw) * aimLerp;
+      smoothAimPitch += (aimTarget.pitch - smoothAimPitch) * aimLerp;
+
+      let fovPulse = 0;
+      if (motionPhase === "casting") {
+        fovPulse = castPowerRef.current * 5;
+      } else if (motionPhase === "floating") {
+        const swingT = Math.min(1, castSwingElapsed / 0.42);
+        fovPulse = 3.5 * (1 - swingT * swingT);
+      } else if (motionPhase === "fighting") {
+        fovPulse = 1.5 + pondTension * 2.8;
+      } else if (motionPhase === "bite") {
+        fovPulse = 2.2 + Math.sin(t * 24) * 0.35;
+      }
+      camera.fov = baseCameraFov + fovPulse;
+      camera.updateProjectionMatrix();
+
+      const rodMotion = computeRodMotion({
+        phase: motionPhase,
+        castPower: castPowerRef.current,
+        tension: pondTension,
+        time: t,
+        dt,
+        castSwingElapsed,
+        aimYaw: smoothAimYaw,
+        aimPitch: smoothAimPitch,
+      });
+
+      pond.update(t, phase, pondTension);
+      bobber.update(t, phase, bobberRef.current.x, bobberRef.current.y);
+      fishShadow.update(t, phase, caughtActor.getState() !== "hidden");
+      particles.update(dt, phase);
+      caughtActor.update(dt);
+      rodAnchor.position.set(
+        rodBasePos.x + rodMotion.offsetX * rodMotionScale,
+        rodBasePos.y + rodMotion.offsetY * rodMotionScale,
+        rodBasePos.z + rodMotion.offsetZ * rodMotionScale,
+      );
+      rodMotionEuler.set(
+        rodMotion.pitch * rodMotionScale,
+        rodMotion.yaw * rodMotionScale,
+        rodMotion.roll * rodMotionScale,
+        "YXZ",
+      );
+      rodMotionQuat.setFromEuler(rodMotionEuler);
+      rodAnchor.quaternion.copy(rodBaseQuat).multiply(rodMotionQuat);
+
+      if (debugFishing) {
+        debugRodLogCooldown -= dt;
+        if (debugRodLogCooldown <= 0) {
+          debugRodLogCooldown = 2;
+          const rodRoot =
+            proceduralRod?.group && (usingProceduralRod || !rodObject)
+              ? proceduralRod.group
+              : (rodObject ?? rodAnchor);
+          logRodScreenBBox(camera, rodRoot, phase);
         }
       }
-      if (st.caughtFishGroup && phase !== "caught") {
-        st.scene.remove(st.caughtFishGroup);
-        st.caughtFishGroup = null;
-      }
-      if (st.caughtFishGroup) {
-        const t = Math.min(1, (now - st.caughtFishStartMs) / 1400);
-        const yArc = 0.3 + Math.sin(t * Math.PI) * 0.28;
-        st.caughtFishGroup.position.set(0.5, yArc, 0.5);
-        st.caughtFishGroup.rotation.y = t * Math.PI * 2;
-        const s = t < 0.2 ? t * 5 : 1;
-        st.caughtFishGroup.scale.setScalar(s);
+
+      if ((phase === "capture_confirm" || showCatchRef.current) && Math.random() < 0.1) {
+        particles.splash();
       }
 
-      st.renderer.render(st.scene, st.camera);
-      lastBobberAnchor = { ...anchor };
+      renderer.render(scene, camera);
     };
     animate();
+    updateViewportLayout();
 
     return () => {
-      const st = stateRef.current;
-      if (st) {
-        cancelAnimationFrame(st.raf);
-        st.ripples.forEach((r) => {
-          st.scene.remove(r.mesh);
-          r.mat.dispose();
-          r.mesh.geometry.dispose();
-        });
-        st.renderer.dispose();
-        try {
-          container.removeChild(renderer.domElement);
-        } catch {
-          /* detached */
-        }
-      }
+      disposed = true;
+      cancelAnimationFrame(raf);
       ro.disconnect();
-      stateRef.current = null;
+      disposeGlbRod();
+      if (proceduralRod) {
+        rodAnchor.remove(proceduralRod.group);
+        proceduralRod.dispose();
+        proceduralRod = null;
+      }
+      bindBobberToTip(null);
+      particles.dispose();
+      fishShadow.dispose();
+      bobber.dispose();
+      caughtActor.dispose();
+      pond.dispose();
+      renderer.dispose();
+      try {
+        container.removeChild(renderer.domElement);
+      } catch {
+        // no-op
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <div ref={containerRef} className="absolute inset-0" aria-hidden />;
-}
-
-function makeCaughtFishPlaceholder(
-  rarity: "common" | "rare" | "legendary",
-): THREE.Group {
-  const grp = new THREE.Group();
-  const color =
-    rarity === "legendary"
-      ? COLOR.fishLegendary
-      : rarity === "rare"
-        ? COLOR.fishRare
-        : COLOR.fishCommon;
-  const body = new THREE.Mesh(
-    new THREE.SphereGeometry(0.06, 28, 22),
-    new THREE.MeshStandardMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity: 0.35,
-      roughness: 0.4,
-    }),
-  );
-  body.scale.set(1.5, 0.8, 0.7);
-  grp.add(body);
-  const tail = new THREE.Mesh(
-    new THREE.ConeGeometry(0.04, 0.06, 10),
-    new THREE.MeshBasicMaterial({ color }),
-  );
-  tail.position.x = -0.08;
-  tail.rotation.z = Math.PI / 2;
-  grp.add(tail);
-  const eye = new THREE.Mesh(
-    new THREE.SphereGeometry(0.01, 10, 8),
-    new THREE.MeshBasicMaterial({ color: 0x111111 }),
-  );
-  eye.position.set(0.05, 0.015, 0.04);
-  grp.add(eye);
-  const light = new THREE.PointLight(0xffffff, 0.7, 0.8);
-  light.position.set(0.2, 0.2, 0.3);
-  grp.add(light);
-  return grp;
+  return <div ref={containerRef} className="absolute inset-0 z-[6]" aria-hidden />;
 }

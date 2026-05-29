@@ -84,6 +84,7 @@ export interface FishingSessionApi {
   reelRelease: () => void;
   loosen: () => void;
   tighten: () => void;
+  captureConfirm: () => void;
   retry: () => void;
   reset: () => void;
 }
@@ -108,6 +109,7 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
   const holdStartRef = useRef<number | null>(null);
   const waitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const biteIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cinematicTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const fightRafRef = useRef<number>(0);
   const reelingRef = useRef(false);
   const tensionRef = useRef(0.5);
@@ -127,6 +129,8 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
     if (waitTimerRef.current) clearTimeout(waitTimerRef.current);
     if (biteIntervalRef.current) clearInterval(biteIntervalRef.current);
     if (fightRafRef.current) cancelAnimationFrame(fightRafRef.current);
+    cinematicTimersRef.current.forEach((t) => clearTimeout(t));
+    cinematicTimersRef.current = [];
     waitTimerRef.current = null;
     biteIntervalRef.current = null;
     fightRafRef.current = 0;
@@ -184,7 +188,7 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
     setPhase("floating");
     setBobberX(targetX);
     setBobberY(targetY);
-    fx.capture();
+    fx.fishingCastRelease(power);
 
     // 비행 끝나면 waiting
     setTimeout(() => {
@@ -215,7 +219,7 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
   // ── bite phase ─────────────────────────────────────────────────
   function triggerBite() {
     setPhase("bite");
-    fx.hit();
+    fx.fishingBite();
     const windowMs = 1500;
     const startMs = performance.now();
     setBiteRemainingMs(windowMs);
@@ -226,7 +230,7 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
         // 놓침
         setPhase("escaped");
         setBiteRemainingMs(0);
-        fx.miss();
+        fx.fishingEscape();
         setMessage("입질을 놓쳤어요…");
         return;
       }
@@ -246,11 +250,28 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
     setTension(0.5);
     tensionRef.current = 0.5;
     setPhase("fighting");
-    fx.finish();
+    fx.fishingCatch();
     startFightingLoop();
   }, [phase, baitLuck]);
 
   // ── fighting loop — 텐션 자동 변동 + reel 입력 ─────────────────
+  function startCaughtCinematic() {
+    setPhase("hook_success");
+    const t1 = setTimeout(() => setPhase("fish_breach"), 120);
+    const t2 = setTimeout(() => setPhase("fish_land"), 700);
+    const t3 = setTimeout(() => setPhase("fish_flop"), 1180);
+    cinematicTimersRef.current.push(t1, t2, t3);
+  }
+
+  function finishCaptureAndReward() {
+    if (phase !== "fish_flop" && phase !== "capture_confirm") return;
+    setPhase("capture_confirm");
+    const t = setTimeout(() => {
+      setPhase("reward");
+    }, 680);
+    cinematicTimersRef.current.push(t);
+  }
+
   function startFightingLoop() {
     let prevMs = performance.now();
     const loop = () => {
@@ -283,14 +304,14 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
       // 끝 조건
       if (fishHpRef.current <= 0) {
         // 잡힘!
-        setPhase("caught");
+        startCaughtCinematic();
         fx.finish();
         return;
       }
       if (next <= 0.02 || next >= 0.98) {
         // 줄 끊김 / 도망
         setPhase("escaped");
-        fx.miss();
+        fx.fishingEscape();
         return;
       }
       fightRafRef.current = requestAnimationFrame(loop);
@@ -319,9 +340,13 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
     setTension(tensionRef.current);
   }, [phase]);
 
+  const captureConfirm = useCallback(() => {
+    finishCaptureAndReward();
+  }, [phase]);
+
   // caught → onReward 트리거
   useEffect(() => {
-    if (phase === "caught" && fishMetaRef.current) {
+    if (phase === "reward" && fishMetaRef.current) {
       onReward?.({ fish: fishMetaRef.current, success: true });
     }
     if (phase === "escaped" && fishMetaRef.current) {
@@ -333,6 +358,16 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
   const retry = useCallback(() => {
     reset();
   }, [reset]);
+
+  useEffect(() => {
+    if (phase !== "fish_flop") return;
+    const t = setTimeout(() => {
+      finishCaptureAndReward();
+    }, 2200);
+    cinematicTimersRef.current.push(t);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   useEffect(() => () => clearTimers(), []);
 
@@ -357,6 +392,7 @@ export function useFishingSession(opts: UseFishingSessionOpts = {}): FishingSess
     reelRelease,
     loosen,
     tighten,
+    captureConfirm,
     retry,
     reset,
   };
