@@ -10,11 +10,14 @@
  * SW 자체 캐시 이름에 버전을 박아 배포마다 옛 캐시 제거.
  */
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const SHELL_CACHE = `shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runtime-${CACHE_VERSION}`;
 
-const SHELL_ASSETS = ["/", "/manifest.webmanifest", "/logo.png"];
+// "/" 는 항상 /home 으로 307 리다이렉트되는 경로다. cache.addAll 이 리다이렉트를
+// 따라가 "redirected" 응답을 저장하면, 이후 navigation 요청에 그 응답을 돌려줄 때
+// 브라우저가 보안상 거부하여 net::ERR_FAILED(-2) 가 발생한다. 따라서 셸에 넣지 않는다.
+const SHELL_ASSETS = ["/manifest.webmanifest", "/logo.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -58,14 +61,22 @@ self.addEventListener("fetch", (event) => {
     caches.match(req).then((cached) => {
       const fetchPromise = fetch(req)
         .then((response) => {
-          // 200 응답만 캐시. opaque/오류 응답은 폐기.
-          if (response && response.status === 200 && response.type === "basic") {
+          // 200 + 리다이렉트되지 않은 응답만 캐시. redirected 응답을 캐시하면
+          // navigation 요청에 되돌려줄 때 net::ERR_FAILED(-2) 가 발생한다.
+          if (
+            response &&
+            response.status === 200 &&
+            response.type === "basic" &&
+            !response.redirected
+          ) {
             const clone = response.clone();
             caches.open(RUNTIME_CACHE).then((cache) => cache.put(req, clone));
           }
           return response;
         })
         .catch(() => cached);
+      // 캐시된 응답이 redirected 면 navigation 에 쓸 수 없으므로 네트워크로 우회.
+      if (cached && cached.redirected) return fetchPromise;
       // stale-while-revalidate: 캐시 있으면 즉답하고 백그라운드 갱신.
       return cached || fetchPromise;
     }),
