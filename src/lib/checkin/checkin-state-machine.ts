@@ -5,6 +5,14 @@ import {
   type CheckinQuestionPlan,
   type CheckinStepId,
 } from "@/lib/checkin/checkin-steps";
+import {
+  buildClosingSummaryPrompt,
+  buildConversationalTransitionPrompt,
+  buildMissingSlotPrompt,
+  getMissingStepIds,
+  getNextStepToAsk,
+  inferCompletedStepsFromText,
+} from "@/lib/checkin/checkin-slot-filling";
 import { hasUrgentEvidenceRisk, type EvidenceRiskMatch } from "@/lib/checkin/evidence-risk";
 
 export type CheckinMachineState = {
@@ -63,12 +71,28 @@ export function getDirectedQuestionPrompt(
   stepId: CheckinStepId,
   questionPlan: CheckinQuestionPlan = buildDefaultCheckinQuestionPlan(),
 ): string {
-  const step = getPlannedStepById(stepId, questionPlan);
+  return getPlannedStepById(stepId, questionPlan).prompt;
+}
+
+/** Realtime response.create — 모델이 지시문을 읽지 않도록 감싼다. */
+export function buildAssistantSpeakInstruction(spokenText: string): string {
+  const line = stripCheckinMetaPrompt(spokenText);
   return [
-    "아래 문장만 따뜻하고 또박또박 말하세요.",
-    "다른 질문을 덧붙이지 말고, 사용자의 답변을 기다리세요.",
-    `질문: ${step.prompt}`,
+    "[INTERNAL — never read aloud]",
+    "Speak ONLY the Korean sentence inside the quotes. Do not say instructions, labels, or phrases like '아래 문장'.",
+    `"${line}"`,
   ].join("\n");
+}
+
+export function stripCheckinMetaPrompt(raw: string): string {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !/^(아래\s*(문장|질문|마무리)|질문:|문장:|마무리:|다른\s*질문|질문이\s*끝|추가\s*질문|마무리\s*멘트|사용자의\s*답변)/.test(line))
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 export function decideAfterAnswer(input: {
@@ -146,12 +170,17 @@ export function decideAfterAnswer(input: {
       };
     }
 
-    const currentIndex = questionPlan.findIndex((step) => step.id === currentStepId);
-    const nextStep = questionPlan[currentIndex + 1];
-    if (!nextStep) {
+    const completedStepIds = [...state.completedStepIds];
+    const missing = getMissingStepIds(questionPlan, completedStepIds);
+    const isLastStep = questionPlan.findIndex((step) => step.id === currentStepId) === questionPlan.length - 1;
+
+    if (missing.length === 0 || isLastStep) {
+      const labels = completedStepIds.map((id) => getPlannedStepById(id, questionPlan).label);
       return {
-        state: { ...state, unclearCount: nextUnclear, ended: true },
-        prompt: "목소리가 계속 약해서 이 항목은 추측해서 기록하지 않을게요. 오늘 통화를 마치겠습니다",
+        state: { ...state, unclearCount: nextUnclear, completedStepIds, ended: true },
+        prompt: isLastStep && missing.length > 0
+          ? "목소리가 계속 약해서 마지막 항목은 추측해서 기록하지 않을게요. 오늘 통화를 마치겠습니다"
+          : buildClosingSummaryPrompt(labels),
         nextStepId: null,
         end: true,
         escalate: false,
@@ -159,17 +188,22 @@ export function decideAfterAnswer(input: {
         unclear: true,
       };
     }
+    const nextStepId = getNextStepToAsk(currentStepId, completedStepIds, questionPlan)!;
     return {
       state: {
         ...state,
-        currentStepId: nextStep.id,
+        currentStepId: nextStepId,
+        completedStepIds,
         unclearCount: nextUnclear,
+        ended: false,
       },
-      prompt: [
-        "목소리가 계속 약해서 방금 항목은 추측해서 기록하지 않을게요.",
-        getDirectedQuestionPrompt(nextStep.id, questionPlan),
-      ].join(" "),
-      nextStepId: nextStep.id,
+      prompt: buildMissingSlotPrompt({
+        stepId: nextStepId,
+        questionPlan,
+        lastAnswer: answerText,
+        unclearAttempt: count,
+      }),
+      nextStepId,
       end: false,
       escalate: false,
       recordAnswer: false,
@@ -177,11 +211,16 @@ export function decideAfterAnswer(input: {
     };
   }
 
-  const completedStepIds = Array.from(new Set([...state.completedStepIds, currentStepId]));
-  const currentIndex = questionPlan.findIndex((step) => step.id === currentStepId);
-  const nextStep = questionPlan[currentIndex + 1];
+  const inferredStepIds = inferCompletedStepsFromText(answerText);
+  // 키워드 추론만으로는 '완료' 처리하지 않음 — 한 문장에 밥·약·기분이 섞이면
+  // 6항목이 한꺼번에 채워져 통화가 조기 종료되는 버그가 있었다.
+  const completedStepIds = Array.from(new Set([
+    ...state.completedStepIds,
+    currentStepId,
+  ]));
+  const missing = getMissingStepIds(questionPlan, completedStepIds);
 
-  if (!nextStep) {
+  if (missing.length === 0) {
     return {
       state: {
         ...state,
@@ -189,7 +228,7 @@ export function decideAfterAnswer(input: {
         endRequestCount: 0,
         ended: true,
       },
-      prompt: "오늘 말씀 나눠서 좋았어요. 제가 여쭤본 이유는 어르신의 하루를 기록하고 필요할 때 보호자에게 전달하기 위해서예요. 말씀해 주신 내용은 지금 기록으로 저장할게요. 통화를 마치겠습니다",
+      prompt: buildClosingSummaryPrompt(completedStepIds.map((id) => getPlannedStepById(id, questionPlan).label)),
       nextStepId: null,
       end: true,
       escalate: false,
@@ -198,15 +237,26 @@ export function decideAfterAnswer(input: {
     };
   }
 
+  const nextStepId = getNextStepToAsk(
+    currentStepId,
+    [...completedStepIds, ...inferredStepIds],
+    questionPlan,
+  )!;
   return {
     state: {
       ...state,
-      currentStepId: nextStep.id,
+      currentStepId: nextStepId,
       completedStepIds,
       endRequestCount: 0,
+      ended: false,
     },
-    prompt: getDirectedQuestionPrompt(nextStep.id, questionPlan),
-    nextStepId: nextStep.id,
+    prompt: buildConversationalTransitionPrompt({
+      nextStepId,
+      questionPlan,
+      lastAnswer: answerText,
+      inferredStepIds,
+    }),
+    nextStepId,
     end: false,
     escalate: false,
     recordAnswer: true,

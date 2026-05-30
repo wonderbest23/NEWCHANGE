@@ -1,10 +1,16 @@
 /**
- * 안부 체크인(LLM) 결과 → voice_psych_analyses 참고 행 생성.
- * 음성 ML 파이프라인이 아닌, 감정 매핑 기반 참고 지표임을 voice_features에 명시.
+ * 안부 체크인(LLM + 음성 prosody) → voice_psych_analyses 참고 행 생성.
  */
 
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { resolveEmotion, type ConditionLevel, type EmotionKey } from "./emotion";
+import {
+  resolveEmotion,
+  type ConditionLevel,
+  type EmotionKey,
+} from "./emotion";
+import type { VoiceProsodySessionSummary } from "./voice-prosody";
+import type { VoiceSerSessionSummary } from "./voice-ser.types";
+import { buildVoiceAnalysisBundle } from "./voice-ser-fusion";
 
 const OVERALL_TONE_BY_EMOTION: Record<EmotionKey, string> = {
   joyful: "bright_energetic",
@@ -79,6 +85,77 @@ function kstTodayDate(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
 }
 
+function buildVoiceFeatures(
+  prosody: VoiceProsodySessionSummary | null | undefined,
+  ser: VoiceSerSessionSummary | null | undefined,
+  bundle: ReturnType<typeof buildVoiceAnalysisBundle>,
+  emotionKey: EmotionKey,
+  checkinId: string,
+  conditionLevel: string,
+  moodStatus: string | null,
+) {
+  if (ser) {
+    return {
+      source: ser.method,
+      checkin_id: checkinId,
+      emotion_key: emotionKey,
+      fused_emotion_key: bundle.fusedEmotionKey,
+      fusion_source: bundle.fusionSource,
+      condition_level: conditionLevel,
+      mood_status: moodStatus,
+      model_id: ser.model_id,
+      turn_count: ser.turn_count,
+      ser_label: ser.label,
+      ser_confidence: ser.confidence,
+      ser_label_scores: ser.label_scores,
+      ser_app_emotion_key: ser.app_emotion_key,
+      vad_valence: ser.vad.valence,
+      vad_arousal: ser.vad.arousal,
+      browser_prosody_hint: prosody?.prosodyEmotionHint ?? null,
+      pitch_hz_mean: prosody?.pitchHzMean ?? null,
+      pitch_variability: prosody?.pitchVariability ?? null,
+      jitter_like: prosody?.jitterLike ?? null,
+      speech_rate_chars_per_sec: prosody?.speechRateCharsPerSec ?? null,
+      disclaimer:
+        "emotion2vec+ 음성 감정 모델 + 대화 텍스트를 융합한 참고 지표이며, 임상 진단이 아닙니다.",
+    };
+  }
+
+  if (prosody) {
+    return {
+      source: "daily_voice_checkin_prosody_v1",
+      checkin_id: checkinId,
+      emotion_key: emotionKey,
+      fused_emotion_key: bundle.fusedEmotionKey,
+      fusion_source: bundle.fusionSource,
+      condition_level: conditionLevel,
+      mood_status: moodStatus,
+      method: prosody.method,
+      turn_count: prosody.turnCount,
+      pitch_hz_mean: prosody.pitchHzMean,
+      pitch_variability: prosody.pitchVariability,
+      jitter_like: prosody.jitterLike,
+      speech_rate_chars_per_sec: prosody.speechRateCharsPerSec,
+      rms_mean: prosody.rmsMean,
+      low_energy_ratio: prosody.lowEnergyRatio,
+      prosody_emotion_hint: prosody.prosodyEmotionHint,
+      disclaimer:
+        "브라우저 음성 prosody(에너지·pitch·발화속도) + 텍스트 분석을 결합한 참고 지표이며, 임상 진단이 아닙니다.",
+    };
+  }
+
+  return {
+    source: "daily_voice_checkin_text",
+    checkin_id: checkinId,
+    emotion_key: emotionKey,
+    fused_emotion_key: bundle.fusedEmotionKey,
+    fusion_source: bundle.fusionSource,
+    condition_level: conditionLevel,
+    mood_status: moodStatus,
+    disclaimer: "텍스트·LLM 기반 참고 지표이며, 음성 파형 ML 분석은 포함되지 않았습니다.",
+  };
+}
+
 export async function syncVoicePsychFromSeniorCheckin(input: {
   familyId: string;
   checkinId: string;
@@ -88,6 +165,8 @@ export async function syncVoicePsychFromSeniorCheckin(input: {
   urgentDetected: boolean;
   lonelinessDetected: boolean;
   dizzinessDetected: boolean;
+  voiceProsodySummary?: VoiceProsodySessionSummary | null;
+  voiceSerSummary?: VoiceSerSessionSummary | null;
 }): Promise<void> {
   const { data: recipient, error: recipientError } = await supabaseAdmin
     .from("care_recipients")
@@ -103,10 +182,30 @@ export async function syncVoicePsychFromSeniorCheckin(input: {
     return;
   }
 
-  const emotion = resolveEmotion(
-    input.conditionLevel as ConditionLevel,
-    input.moodStatus,
-  );
+  const bundle = buildVoiceAnalysisBundle({
+    conditionLevel: input.conditionLevel,
+    moodStatus: input.moodStatus,
+    ser: input.voiceSerSummary ?? null,
+    browserProsody: input.voiceProsodySummary ?? null,
+  });
+
+  const prosodyHint =
+    bundle.fusionSource === "browser_fallback" || bundle.fusionSource === "multimodal"
+      ? input.voiceProsodySummary?.prosodyEmotionHint ?? null
+      : input.voiceSerSummary?.app_emotion_key ?? input.voiceProsodySummary?.prosodyEmotionHint ?? null;
+
+  const emotion =
+    input.voiceSerSummary && bundle.fusionSource !== "text"
+      ? resolveEmotion(
+          input.conditionLevel as ConditionLevel,
+          input.moodStatus,
+          bundle.fusedEmotionKey,
+        )
+      : resolveEmotion(
+          input.conditionLevel as ConditionLevel,
+          input.moodStatus,
+          prosodyHint,
+        );
   const scores = deriveScores(emotion.key, emotion.valence, emotion.arousal);
   const analyzedForDate = kstTodayDate();
 
@@ -114,6 +213,10 @@ export async function syncVoicePsychFromSeniorCheckin(input: {
   if (input.urgentDetected || input.conditionLevel === "urgent") riskFlags.push("checkin_urgent");
   if (input.lonelinessDetected) riskFlags.push("loneliness");
   if (input.dizzinessDetected) riskFlags.push("dizziness");
+  if (input.voiceSerSummary?.app_emotion_key === "anxious") riskFlags.push("ser_anxiety_hint");
+  if (input.voiceSerSummary?.app_emotion_key === "sad") riskFlags.push("ser_low_mood_hint");
+  if (input.voiceProsodySummary?.prosodyEmotionHint === "anxious") riskFlags.push("prosody_anxiety_hint");
+  if (input.voiceProsodySummary?.prosodyEmotionHint === "tired") riskFlags.push("prosody_fatigue_hint");
 
   const row = {
     care_recipient_id: recipient.id,
@@ -125,16 +228,15 @@ export async function syncVoicePsychFromSeniorCheckin(input: {
     depression_score: scores.depression,
     anxiety_score: scores.anxiety,
     anger_score: scores.anger,
-    voice_features: {
-      source: "daily_voice_checkin",
-      checkin_id: input.checkinId,
-      emotion_key: emotion.key,
-      valence: emotion.valence,
-      arousal: emotion.arousal,
-      condition_level: input.conditionLevel,
-      mood_status: input.moodStatus,
-      disclaimer: "안부 LLM·감정 매핑 기반 참고 지표이며, 음성 파형 ML 분석이 아닙니다.",
-    },
+    voice_features: buildVoiceFeatures(
+      input.voiceProsodySummary,
+      input.voiceSerSummary ?? null,
+      bundle,
+      emotion.key,
+      input.checkinId,
+      input.conditionLevel,
+      input.moodStatus,
+    ),
     summary: input.summary || `${emotion.label} 신호가 안부 기록에 반영됐어요.`,
     risk_flags: riskFlags,
   };

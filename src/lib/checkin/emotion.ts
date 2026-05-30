@@ -139,6 +139,20 @@ const EMOTIONS: Record<EmotionKey, EmotionInfo> = {
 export function resolveEmotion(
   condition: ConditionLevel | string | null | undefined,
   mood: string | null | undefined,
+  prosodyHint?: EmotionKey | null,
+): EmotionInfo {
+  const textEmotion = resolveEmotionFromText(condition, mood);
+  if (!prosodyHint || prosodyHint === textEmotion.key) return textEmotion;
+  // 텍스트와 파형 신호가 다를 때: urgent/caution은 텍스트 우선, 그 외는 파형 힌트 반영
+  const c = (condition ?? "normal") as ConditionLevel;
+  if (c === "urgent" || c === "caution") return textEmotion;
+  return EMOTIONS[prosodyHint] ?? textEmotion;
+}
+
+/** LLM/키워드 기반 감정 매핑 */
+export function resolveEmotionFromText(
+  condition: ConditionLevel | string | null | undefined,
+  mood: string | null | undefined,
 ): EmotionInfo {
   const c = (condition ?? "normal") as ConditionLevel;
   const m = (mood ?? "").toLowerCase();

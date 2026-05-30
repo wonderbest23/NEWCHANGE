@@ -11,6 +11,7 @@ import {
   analyzeAndSaveCheckin,
   denyCareMemoryItem,
   getCheckinOpeningMemory,
+  getTodayCheckin,
   recordCheckinQualityEvent,
 } from "@/lib/checkin/checkin-actions";
 import { authHeaders } from "@/lib/auth/server-fn-headers";
@@ -22,8 +23,16 @@ import {
   saveCheckinCallDraft,
   type CheckinCallDraft,
 } from "@/lib/checkin/background-save";
-import { trackEvent } from "@/lib/analytics/trackEvent";
+import {
+  estimatePitchHz,
+  summarizeProsodySession,
+  summarizeProsodyTurn,
+  type ProsodySample,
+  type VoiceProsodyTurn,
+} from "@/lib/checkin/voice-prosody";
+import type { VoiceSerTurnClip } from "@/lib/checkin/voice-ser.types";
 import { ANALYTICS_EVENTS } from "@/lib/analytics/eventNames";
+import { trackEvent } from "@/lib/analytics/trackEvent";
 import { ALERT_LEVEL_LABEL, resolveAlert, resolveEmotion } from "@/lib/checkin/emotion";
 import {
   buildCheckinStepAnswers,
@@ -36,16 +45,18 @@ import {
 } from "@/lib/checkin/checkin-steps";
 import { detectEvidenceBasedRisks, hasUrgentEvidenceRisk } from "@/lib/checkin/evidence-risk";
 import {
+  buildAssistantSpeakInstruction,
   createInitialCheckinState,
   decideAfterAnswer,
   getOpeningPrompt,
   isUnclearAnswerText,
+  stripCheckinMetaPrompt,
   type CheckinMachineState,
 } from "@/lib/checkin/checkin-state-machine";
 
 type Transcript = { role: "user" | "ai"; text: string; ts: number; partial?: boolean };
 type Status = "idle" | "connecting" | "live" | "ended" | "analyzing";
-type TurnState = "idle" | "ai_speaking" | "user_can_speak";
+type TurnState = "idle" | "ai_speaking" | "user_can_speak" | "ending";
 type SavedCheckinTurn = {
   id: string;
   turn_index?: number | null;
@@ -59,6 +70,70 @@ type SavedCheckinTurn = {
 };
 
 type AnalyzeResult = Awaited<ReturnType<typeof analyzeAndSaveCheckin>>;
+
+function pickSerRecorderMime(): string {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  if (typeof MediaRecorder === "undefined") return "audio/webm";
+  for (const mime of candidates) {
+    if (MediaRecorder.isTypeSupported(mime)) return mime;
+  }
+  return "audio/webm";
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(",")[1] ?? "";
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+type ConnectPhase = "session" | "webrtc";
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} 시간이 초과됐어요. 잠시 후 다시 시도해 주세요.`)),
+      ms,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
+
+/** 클릭 이벤트와 같은 tick 에 시작해야 권한 팝업이 뜬다. */
+function requestMicStream(): Promise<MediaStream> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+    return Promise.reject(new Error("이 브라우저에서는 마이크를 사용할 수 없어요."));
+  }
+  return navigator.mediaDevices
+    .getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    })
+    .catch((err) => {
+      if (err?.name === "NotAllowedError" || err?.name === "SecurityError") throw err;
+      return navigator.mediaDevices.getUserMedia({ audio: true });
+    });
+}
 type OpeningMemory = Awaited<ReturnType<typeof getCheckinOpeningMemory>>;
 type AudioQualityStats = {
   samples: number;
@@ -107,6 +182,7 @@ export function DailyVoiceCheckin({
   savedTurns?: SavedCheckinTurn[];
 }) {
   const [status, setStatus] = useState<Status>("idle");
+  const [connectPhase, setConnectPhase] = useState<ConnectPhase | null>(null);
   const [muted, setMuted] = useState(false);
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +233,24 @@ export function DailyVoiceCheckin({
   const remoteReadyRef = useRef(false);
   const pendingAutoEndRef = useRef(false);
   const pendingAutoEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assistantAudioActiveRef = useRef(false);
+  const assistantTurnEpochRef = useRef(0);
+  const assistantUnlockAtRef = useRef<number | null>(null);
+  const assistantCompleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assistantWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remoteAudioContextRef = useRef<AudioContext | null>(null);
+  const remoteAnalyserRef = useRef<AnalyserNode | null>(null);
+  const remoteSilenceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const remoteAudioHeardRef = useRef(false);
+  const lastRemoteAudioAtRef = useRef(0);
+  const assistantGenerationDoneRef = useRef(false);
+  const userProsodySamplesRef = useRef<ProsodySample[]>([]);
+  const userProsodyTurnStartedRef = useRef<number | null>(null);
+  const voiceProsodyTurnsRef = useRef<VoiceProsodyTurn[]>([]);
+  const voiceSerTurnClipsRef = useRef<VoiceSerTurnClip[]>([]);
+  const serRecorderRef = useRef<MediaRecorder | null>(null);
+  const serChunksRef = useRef<Blob[]>([]);
+  const pendingSerClipTasksRef = useRef<Promise<void>[]>([]);
   const draftAutosaveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const qualityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -235,6 +329,17 @@ export function DailyVoiceCheckin({
           avgRms: (prev.avgRms * prev.samples + rms) / samples,
           lowRmsSamples: prev.lowRmsSamples + (rms < 0.012 ? 1 : 0),
         };
+
+        if (
+          !isAssistantSpeakingRef.current &&
+          !pendingAutoEndRef.current &&
+          statusRef.current === "live"
+        ) {
+          const floatBuffer = new Float32Array(analyser.fftSize);
+          analyser.getFloatTimeDomainData(floatBuffer);
+          const pitchHz = estimatePitchHz(floatBuffer, ctx.sampleRate);
+          userProsodySamplesRef.current.push({ rms, pitchHz, ts: Date.now() });
+        }
       }, 350);
     } catch (e) {
       console.warn("[checkin-audio] mic level sampling failed", e);
@@ -320,38 +425,202 @@ export function DailyVoiceCheckin({
   };
 
   const runPendingAutoEnd = () => {
+    if (autoEndTriggeredRef.current || !pendingAutoEndRef.current) return;
+    pendingAutoEndRef.current = false;
+    if (statusRef.current === "live" || statusRef.current === "connecting") {
+      endCallRef.current();
+    }
+  };
+
+  const cancelPendingAutoEnd = () => {
+    pendingAutoEndRef.current = false;
+    if (pendingAutoEndTimerRef.current) {
+      clearTimeout(pendingAutoEndTimerRef.current);
+      pendingAutoEndTimerRef.current = null;
+    }
+  };
+
+  /** 마무리 멘트 TTS가 끝난 뒤에만 통화를 종료한다. */
+  const armClosingAutoEnd = () => {
+    pendingAutoEndRef.current = true;
+    setTurnState("ending");
+    setMicEnabled(false);
+  };
+
+  const scheduleClosingAutoEnd = () => {
+    if (!pendingAutoEndRef.current || autoEndTriggeredRef.current) return;
     if (pendingAutoEndTimerRef.current) clearTimeout(pendingAutoEndTimerRef.current);
-    pendingAutoEndTimerRef.current = setTimeout(() => {
-      if (!pendingAutoEndRef.current) return;
-      pendingAutoEndRef.current = false;
-      if (statusRef.current === "live" || statusRef.current === "connecting") {
-        endCallRef.current();
+    // 마무리 멘트 TTS가 끝날 시간을 준다 (1.5초는 문장 중간에 끊기기 쉬움)
+    pendingAutoEndTimerRef.current = setTimeout(runPendingAutoEnd, 4500);
+  };
+
+  const startSerTurnRecording = () => {
+    const stream = localStreamRef.current;
+    if (!stream || typeof MediaRecorder === "undefined") return;
+    if (serRecorderRef.current?.state === "recording") return;
+    try {
+      serChunksRef.current = [];
+      const mimeType = pickSerRecorderMime();
+      const recorder = new MediaRecorder(stream, { mimeType });
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) serChunksRef.current.push(event.data);
+      };
+      recorder.start(200);
+      serRecorderRef.current = recorder;
+    } catch (e) {
+      console.warn("[checkin-ser] recording start failed", e);
+    }
+  };
+
+  const finalizeSerTurnRecording = (transcript: string, stepId: CheckinStepId): Promise<void> => {
+    const recorder = serRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") return Promise.resolve();
+    serRecorderRef.current = null;
+
+    const task = new Promise<void>((resolve) => {
+      recorder.onstop = async () => {
+        try {
+          const blob = new Blob(serChunksRef.current, {
+            type: recorder.mimeType || "audio/webm",
+          });
+          serChunksRef.current = [];
+          if (blob.size > 400) {
+            const audioBase64 = await blobToBase64(blob);
+            voiceSerTurnClipsRef.current.push({
+              stepId,
+              transcript,
+              audioBase64,
+              mimeType: blob.type || "audio/webm",
+            });
+          }
+        } catch (e) {
+          console.warn("[checkin-ser] clip finalize failed", e);
+        }
+        resolve();
+      };
+      try {
+        recorder.stop();
+      } catch {
+        resolve();
       }
-    }, 0);
+    });
+    pendingSerClipTasksRef.current.push(task);
+    return task;
   };
 
-  const scheduleAutoEnd = (delayMs = 1800) => {
-    pendingAutoEndRef.current = true;
-    if (pendingAutoEndTimerRef.current) clearTimeout(pendingAutoEndTimerRef.current);
-    pendingAutoEndTimerRef.current = setTimeout(runPendingAutoEnd, delayMs);
+  const stopSerTurnRecording = () => {
+    const recorder = serRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+    try {
+      recorder.stop();
+    } catch {}
+    serRecorderRef.current = null;
   };
 
-  const waitForAssistantThenAutoEnd = (fallbackMs = 12000) => {
-    pendingAutoEndRef.current = true;
-    if (pendingAutoEndTimerRef.current) clearTimeout(pendingAutoEndTimerRef.current);
-    pendingAutoEndTimerRef.current = setTimeout(runPendingAutoEnd, fallbackMs);
+  const canAutoEndNow = () => machineStateRef.current.ended;
+
+  const clearAssistantTurnTimers = () => {
+    assistantUnlockAtRef.current = null;
+    if (assistantCompleteTimerRef.current) {
+      clearTimeout(assistantCompleteTimerRef.current);
+      assistantCompleteTimerRef.current = null;
+    }
+    if (assistantWatchdogTimerRef.current) {
+      clearTimeout(assistantWatchdogTimerRef.current);
+      assistantWatchdogTimerRef.current = null;
+    }
   };
 
-  const canAutoEndNow = () => {
-    const state = machineStateRef.current;
-    const completedCount = stepAnswersRef.current.length;
-    const expectedCount = questionPlanRef.current.length || CHECKIN_STEPS.length;
-    return state.ended && (
-      state.escalated ||
-      completedCount >= expectedCount ||
-      state.completedStepIds.length >= expectedCount ||
-      state.endRequestCount >= 2
-    );
+  const completeAssistantTurn = (opts: { force?: boolean } = {}) => {
+    const force = opts.force === true;
+    if (!force && !isAssistantSpeakingRef.current && !pendingAutoEndRef.current) return;
+    if (!force && pendingAutoEndRef.current && !assistantGenerationDoneRef.current) return;
+
+    clearAssistantTurnTimers();
+    assistantAudioActiveRef.current = false;
+    remoteAudioHeardRef.current = false;
+
+    if (pendingAutoEndRef.current) {
+      scheduleClosingAutoEnd();
+      return;
+    }
+
+    isAssistantSpeakingRef.current = false;
+    isProcessingTurnRef.current = false;
+    setTurnState("user_can_speak");
+    setMicEnabled(true);
+    startSerTurnRecording();
+  };
+
+  const scheduleAssistantTurnComplete = (delayMs: number) => {
+    const epoch = assistantTurnEpochRef.current;
+    const unlockAt = Date.now() + delayMs;
+    if (assistantUnlockAtRef.current !== null && assistantUnlockAtRef.current <= unlockAt) {
+      return;
+    }
+    assistantUnlockAtRef.current = unlockAt;
+    if (assistantCompleteTimerRef.current) clearTimeout(assistantCompleteTimerRef.current);
+    assistantCompleteTimerRef.current = setTimeout(() => {
+      if (assistantTurnEpochRef.current !== epoch) return;
+      completeAssistantTurn();
+    }, delayMs);
+  };
+
+  const noteAssistantPlaybackFinished = (source: "buffer" | "generation" | "response") => {
+    if (!isAssistantSpeakingRef.current && !pendingAutoEndRef.current) return;
+    assistantGenerationDoneRef.current = true;
+    const delayMs = source === "buffer" ? 600 : source === "generation" ? 1000 : 1200;
+    scheduleAssistantTurnComplete(delayMs);
+  };
+
+  const stopRemoteAudioMonitoring = () => {
+    if (remoteSilenceTimerRef.current) {
+      clearInterval(remoteSilenceTimerRef.current);
+      remoteSilenceTimerRef.current = null;
+    }
+    try { remoteAudioContextRef.current?.close(); } catch {}
+    remoteAudioContextRef.current = null;
+    remoteAnalyserRef.current = null;
+    remoteAudioHeardRef.current = false;
+    lastRemoteAudioAtRef.current = 0;
+  };
+
+  const startRemoteAudioMonitoring = (stream: MediaStream) => {
+    stopRemoteAudioMonitoring();
+    try {
+      const ctx = new AudioContext();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      remoteAudioContextRef.current = ctx;
+      remoteAnalyserRef.current = analyser;
+
+      remoteSilenceTimerRef.current = setInterval(() => {
+        if (!isAssistantSpeakingRef.current || !remoteAnalyserRef.current) return;
+        const buffer = new Uint8Array(remoteAnalyserRef.current.frequencyBinCount);
+        remoteAnalyserRef.current.getByteTimeDomainData(buffer);
+        let sumSquares = 0;
+        for (let i = 0; i < buffer.length; i += 1) {
+          const centered = (buffer[i] - 128) / 128;
+          sumSquares += centered * centered;
+        }
+        const rms = Math.sqrt(sumSquares / buffer.length);
+        if (rms >= 0.018) {
+          remoteAudioHeardRef.current = true;
+          lastRemoteAudioAtRef.current = Date.now();
+          return;
+        }
+        // TTS 생성/전송 중 문장 사이 쉼은 '말 끝'이 아니다.
+        if (!assistantGenerationDoneRef.current) return;
+        if (!remoteAudioHeardRef.current) return;
+        if (Date.now() - lastRemoteAudioAtRef.current >= 1400) {
+          completeAssistantTurn();
+        }
+      }, 200);
+    } catch (e) {
+      console.warn("[checkin-audio] remote silence monitor failed", e);
+    }
   };
 
   const startDraftAutosave = () => {
@@ -455,24 +724,29 @@ export function DailyVoiceCheckin({
     setMicEnabled(false);
   };
 
-  const lockUserInputForAssistantAudio = () => {
+  const beginAssistantTurn = () => {
     prepareAssistantTurn();
     isAssistantSpeakingRef.current = true;
+    assistantAudioActiveRef.current = false;
+    assistantGenerationDoneRef.current = false;
+    remoteAudioHeardRef.current = false;
+    lastRemoteAudioAtRef.current = 0;
     lastAssistantAudioAtRef.current = Date.now();
-    if (assistantSilenceTimerRef.current) {
-      clearTimeout(assistantSilenceTimerRef.current);
-      assistantSilenceTimerRef.current = null;
+    clearAssistantTurnTimers();
+    const epoch = ++assistantTurnEpochRef.current;
+    assistantWatchdogTimerRef.current = setTimeout(() => {
+      if (assistantTurnEpochRef.current !== epoch) return;
+      completeAssistantTurn({ force: true });
+    }, pendingAutoEndRef.current ? 25000 : 18000);
+    if (pendingAutoEndRef.current) {
+      if (pendingAutoEndTimerRef.current) clearTimeout(pendingAutoEndTimerRef.current);
+      pendingAutoEndTimerRef.current = setTimeout(runPendingAutoEnd, 25000);
     }
   };
 
-  const unlockUserInputAfterAssistant = (delayMs = 650) => {
-    if (assistantSilenceTimerRef.current) clearTimeout(assistantSilenceTimerRef.current);
-    assistantSilenceTimerRef.current = setTimeout(() => {
-      isAssistantSpeakingRef.current = false;
-      isProcessingTurnRef.current = false;
-      setTurnState("user_can_speak");
-      setMicEnabled(true);
-    }, delayMs);
+  const noteAssistantAudioDelta = () => {
+    assistantAudioActiveRef.current = true;
+    lastAssistantAudioAtRef.current = Date.now();
   };
 
   const saveDraftFromCurrentState = (
@@ -546,6 +820,22 @@ export function DailyVoiceCheckin({
     }
   }, [status]);
 
+  // connecting 상태가 끝없이 이어지면 강제로 idle 복귀
+  useEffect(() => {
+    if (status !== "connecting") return;
+    const timer = setTimeout(() => {
+      if (statusRef.current !== "connecting") return;
+      console.error("[checkin] connect watchdog timeout");
+      setConnectPhase(null);
+      setError("연결 시간이 초과됐어요. 마이크 권한과 네트워크를 확인한 뒤 다시 시도해 주세요.");
+      setStatus("idle");
+      cleanup();
+      toast.error("통화 연결 시간이 초과됐어요");
+    }, 60_000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
   // transcripts/status 변경을 ref에 동기화 — 언마운트 시점에서도 최신 값 참조 가능
   useEffect(() => { transcriptsRef.current = transcripts; }, [transcripts]);
   useEffect(() => { statusRef.current = status; }, [status]);
@@ -606,6 +896,10 @@ export function DailyVoiceCheckin({
       pendingAutoEndTimerRef.current = null;
     }
     pendingAutoEndRef.current = false;
+    cancelPendingAutoEnd();
+    clearAssistantTurnTimers();
+    stopRemoteAudioMonitoring();
+    stopSerTurnRecording();
     if (assistantSilenceTimerRef.current) {
       clearTimeout(assistantSilenceTimerRef.current);
       assistantSilenceTimerRef.current = null;
@@ -624,6 +918,8 @@ export function DailyVoiceCheckin({
     pcRef.current = null;
     isAssistantSpeakingRef.current = false;
     isProcessingTurnRef.current = false;
+    assistantAudioActiveRef.current = false;
+    assistantTurnEpochRef.current += 1;
     setTurnState("idle");
     setUserSpeaking(false);
   };
@@ -637,12 +933,16 @@ export function DailyVoiceCheckin({
   const sendDirectedAssistantPrompt = (prompt: string, stepId: CheckinStepId | null) => {
     const dc = dcRef.current;
     if (!dc || dc.readyState !== "open") return;
+    const spokenLine = stripCheckinMetaPrompt(prompt);
+    if (stepId !== null) {
+      cancelPendingAutoEnd();
+    }
     if (stepId) rememberAssistantQuestion(stepId, getPlannedStepById(stepId, questionPlanRef.current).prompt, Date.now());
     prepareAssistantTurn();
     dc.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: prompt,
+        instructions: buildAssistantSpeakInstruction(spokenLine),
       },
     }));
   };
@@ -665,6 +965,19 @@ export function DailyVoiceCheckin({
     }
     lastUserTranscriptRef.current = text;
     lastUserTranscriptAtRef.current = now;
+
+    void finalizeSerTurnRecording(text, currentStepIdRef.current);
+
+    const prosodyTurn = summarizeProsodyTurn({
+      samples: userProsodySamplesRef.current,
+      transcript: text,
+      startedAt: userProsodyTurnStartedRef.current ?? now - 800,
+      endedAt: now,
+    });
+    if (prosodyTurn) voiceProsodyTurnsRef.current.push(prosodyTurn);
+    userProsodySamplesRef.current = [];
+    userProsodyTurnStartedRef.current = null;
+
     const riskMatches = detectEvidenceBasedRisks([{ role: "user", text }]);
     const ambiguousTranscript = isAmbiguousTranscript(text);
     const decision = decideAfterAnswer({
@@ -722,12 +1035,11 @@ export function DailyVoiceCheckin({
       toast("목소리 인식이 약해서 다시 확인할게요.");
     }
 
-    if (decision.end) {
-      if (canAutoEndNow()) {
-        waitForAssistantThenAutoEnd(decision.escalate ? 15000 : 12000);
-      } else {
-        pendingAutoEndRef.current = false;
-      }
+    if (decision.end && decision.nextStepId === null && canAutoEndNow()) {
+      armClosingAutoEnd();
+      toast.message("오늘 안부 확인을 마무리할게요.", { duration: 3000 });
+    } else {
+      cancelPendingAutoEnd();
     }
 
     sendDirectedAssistantPrompt(decision.prompt, decision.nextStepId);
@@ -737,10 +1049,10 @@ export function DailyVoiceCheckin({
     const text = ((msg.transcript ?? msg.text ?? msg.delta ?? "") as string).trim();
     if (!text) return;
 
-    // AI 음성이 실제로 출력되는 동안 들어온 전사는 스피커 잔향/끼어들기일 가능성이 높다.
-    // 단, Realtime은 사용자 답변 직후 response.created가 먼저 오고 전사 완료가 뒤따를 수 있으므로
-    // "응답 생성 중"이라는 이유만으로 사용자 전사를 버리면 안 된다.
-    if (isAssistantSpeakingRef.current) return;
+    // AI 음성/질문 진행 중, 마무리 멘트 중에는 사용자 전사를 받지 않는다.
+    if (isAssistantSpeakingRef.current || pendingAutoEndRef.current) {
+      return;
+    }
 
     if (!isMeaningfulUserText(text)) return;
 
@@ -759,21 +1071,29 @@ export function DailyVoiceCheckin({
     ) {
       handleUserTranscript(msg);
     } else if (t === "input_audio_buffer.speech_started" || t === "input_audio_buffer.speech_start") {
-      if (!isAssistantSpeakingRef.current) setUserSpeaking(true);
+      if (
+        !isAssistantSpeakingRef.current &&
+        !pendingAutoEndRef.current
+      ) {
+        if (!userProsodyTurnStartedRef.current) {
+          userProsodyTurnStartedRef.current = Date.now();
+          userProsodySamplesRef.current = [];
+          startSerTurnRecording();
+        }
+        setUserSpeaking(true);
+      }
     } else if (t === "input_audio_buffer.speech_stopped" || t === "input_audio_buffer.speech_stop") {
       setUserSpeaking(false);
     } else if (t === "response.created") {
-      prepareAssistantTurn();
+      beginAssistantTurn();
     } else if (t === "session.created" || t === "session.updated") {
       requestOpeningGreeting();
+    } else if (t === "response.audio.delta" || t === "response.output_audio.delta") {
+      noteAssistantAudioDelta();
     } else if (
-      t === "response.audio.delta" ||
-      t === "response.output_audio.delta" ||
       t === "response.audio_transcript.delta" ||
       t === "response.output_audio_transcript.delta"
     ) {
-      // AI 음성 출력 시작/진행 중
-      lockUserInputForAssistantAudio();
       if (t === "response.audio_transcript.delta" || t === "response.output_audio_transcript.delta") {
         const delta = msg.delta || "";
         setTranscripts((prev) => {
@@ -793,21 +1113,12 @@ export function DailyVoiceCheckin({
         }
         return prev;
       });
-      // AI가 종료 문장을 말해도 상태머신이 충분한 기록/긴급 상태를 확인한 경우에만 종료한다.
-      if (/통화를\s*마치겠습니다/.test(finalText) && canAutoEndNow() && !autoEndTriggeredRef.current) {
-        waitForAssistantThenAutoEnd(12000);
-      }
-    } else if (
-      t === "response.done" ||
-      t === "response.audio.done" ||
-      t === "response.output_audio.done" ||
-      t === "output_audio_buffer.stopped"
-    ) {
-      // AI 발화가 완전히 끝나고 잔향이 사라진 뒤 사용자 입력을 다시 연다.
-      unlockUserInputAfterAssistant(700);
-      if (pendingAutoEndRef.current) {
-        scheduleAutoEnd(3200);
-      }
+    } else if (t === "output_audio_buffer.stopped") {
+      noteAssistantPlaybackFinished("buffer");
+    } else if (t === "response.output_audio.done" || t === "response.audio.done") {
+      noteAssistantPlaybackFinished("generation");
+    } else if (t === "response.done") {
+      noteAssistantPlaybackFinished("response");
     } else if (t === "error") {
       const errMsg = (msg.error?.message ?? "") as string;
       // OpenAI Realtime 의 경쟁 상태(race) 에러 — 첫 응답은 정상 진행 중이고
@@ -835,11 +1146,7 @@ export function DailyVoiceCheckin({
     dc.send(JSON.stringify({
       type: "response.create",
       response: {
-        instructions: [
-          "아래 문장만 따뜻하고 또박또박 말하세요.",
-          "다른 질문을 덧붙이지 말고, 사용자의 답변을 기다리세요.",
-          `문장: ${prompt}`,
-        ].join("\n"),
+        instructions: buildAssistantSpeakInstruction(prompt),
       },
     }));
   };
@@ -885,6 +1192,14 @@ export function DailyVoiceCheckin({
       toast("오늘은 이미 안부 통화를 완료했어요. 내일 다시 만나요.");
       return;
     }
+
+    // setState/await 전에 마이크 요청을 시작 — 그렇지 않으면 권한 팝업이 안 뜰 수 있음
+    try {
+      localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    } catch {}
+    localStreamRef.current = null;
+    const micPromise = requestMicStream();
+
     setError(null);
     const resumeContext = buildResumeContext();
     if (!draft) setTranscripts([]);
@@ -893,9 +1208,20 @@ export function DailyVoiceCheckin({
     setShowConversationReview(false);
     setResult(null);
     setStatus("connecting");
+    setConnectPhase("session");
     setTurnState("idle");
     autoEndTriggeredRef.current = false;
     pendingAutoEndRef.current = false;
+    assistantAudioActiveRef.current = false;
+    assistantGenerationDoneRef.current = false;
+    userProsodySamplesRef.current = [];
+    userProsodyTurnStartedRef.current = null;
+    voiceProsodyTurnsRef.current = [];
+    voiceSerTurnClipsRef.current = [];
+    pendingSerClipTasksRef.current = [];
+    assistantTurnEpochRef.current = 0;
+    cancelPendingAutoEnd();
+    clearAssistantTurnTimers();
     openingGreetingSentRef.current = false;
     openingMemoryCheckedRef.current = false;
     remoteReadyRef.current = false;
@@ -909,37 +1235,49 @@ export function DailyVoiceCheckin({
     });
     try {
       startDraftAutosave();
-      openingMemoryRef.current = draft
-        ? null
-        : await getCheckinOpeningMemory({ headers: await authHeaders() });
+
+      const headers = await withTimeout(authHeaders(), 8_000, "로그인 확인");
+
+      // 연결을 막지 않도록 기억 불러오기는 백그라운드 — 실패해도 통화는 시작
+      if (!draft) {
+        void withTimeout(getCheckinOpeningMemory({ headers }), 8_000, "지난 안부 불러오기")
+          .then((memory) => {
+            openingMemoryRef.current = memory;
+            questionPlanRef.current = buildCheckinQuestionPlan(new Date(), memory);
+          })
+          .catch((memoryError) => {
+            console.warn("[checkin] opening memory skipped", memoryError);
+          });
+      } else {
+        openingMemoryRef.current = null;
+      }
+
+      const session = await withTimeout(
+        createRealtimeSession({
+          data: {
+            personaName: nickname,
+            checkinMode: true,
+            personaContext: [
+              "오늘의 안부 통화 — 컨디션, 식사, 약, 기분을 부드럽게 여쭤봐 주세요.",
+              resumeContext,
+            ].filter(Boolean).join("\n\n"),
+          },
+          headers,
+        }),
+        30_000,
+        "AI 연결 준비",
+      );
+
       questionPlanRef.current = draft?.questionPlan?.length
         ? draft.questionPlan
         : buildCheckinQuestionPlan(new Date(), openingMemoryRef.current);
       machineStateRef.current = createInitialCheckinState(draft?.currentStepId ?? "Q1_MEAL", questionPlanRef.current);
       currentStepIdRef.current = draft?.currentStepId ?? "Q1_MEAL";
       currentQuestionRef.current = draft?.lastQuestion ?? getPlannedStepById("Q1_MEAL", questionPlanRef.current).prompt;
-      const session = await createRealtimeSession({
-        data: {
-          personaName: nickname,
-          personaContext: [
-            "오늘의 안부 통화 — 컨디션, 식사, 약, 기분을 부드럽게 여쭤봐 주세요.",
-            resumeContext,
-          ].filter(Boolean).join("\n\n"),
-        },
-      });
       if (!session.client_secret) throw new Error("연결 토큰 발급 실패");
 
-      // 마이크 입력 보정: 에코 제거 + 노이즈 억제 + 자동 게인 (브라우저 수준 1차 필터)
-      const localStream = await navigator.mediaDevices
-        .getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            channelCount: 1,
-          },
-        })
-        .catch(async () => navigator.mediaDevices.getUserMedia({ audio: true }));
+      setConnectPhase("webrtc");
+      const localStream = await withTimeout(micPromise, 25_000, "마이크 권한");
       localStreamRef.current = localStream;
       startMicSignalSampling(localStream);
       mutedRef.current = false;
@@ -975,6 +1313,7 @@ export function DailyVoiceCheckin({
             setError("AI 목소리 재생이 차단됐어요. 휴대폰 무음 모드와 브라우저 권한을 확인해 주세요.");
           });
         }
+        startRemoteAudioMonitoring(e.streams[0]);
       };
       localStream.getAudioTracks().forEach((track) => {
         pc.addTransceiver(track, {
@@ -993,16 +1332,18 @@ export function DailyVoiceCheckin({
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const sdpResponse = await fetch(
-        "https://api.openai.com/v1/realtime/calls",
-        {
+      const sdpResponse = await withTimeout(
+        fetch(OPENAI_REALTIME_CALLS_URL, {
           method: "POST",
           body: offer.sdp,
           headers: {
             Authorization: `Bearer ${session.client_secret}`,
             "Content-Type": "application/sdp",
           },
-        },
+          signal: AbortSignal.timeout(30_000),
+        }),
+        35_000,
+        "음성 연결",
       );
       if (!sdpResponse.ok) throw new Error(`연결 실패 (${sdpResponse.status})`);
       const answerSdp = await sdpResponse.text();
@@ -1010,17 +1351,22 @@ export function DailyVoiceCheckin({
       remoteReadyRef.current = true;
       requestOpeningGreeting();
 
+      setConnectPhase(null);
       setStatus("live");
       toast.success(draft ? "이어서 연결됐어요. 편하게 계속 이야기해 주세요." : "연결되었어요. 편하게 이야기해 주세요.");
     } catch (e: any) {
       console.error(e);
-      setError(e.message || String(e));
+      setConnectPhase(null);
+      const raw = e?.name === "NotAllowedError"
+        ? "마이크 권한이 필요해요. 브라우저 설정에서 마이크를 허용해 주세요."
+        : e?.message || String(e);
+      setError(raw);
       setStatus("idle");
       void recordQuality("failed", { draftReason: "connect_failed" }).catch((err) =>
         console.warn("[checkin-quality] failed event failed", err),
       );
       cleanup();
-      toast.error("통화를 시작할 수 없어요");
+      toast.error(raw.includes("시간이 초과") ? raw : `통화를 시작할 수 없어요. ${raw}`);
     }
   };
 
@@ -1044,72 +1390,74 @@ export function DailyVoiceCheckin({
       return;
     }
 
-    // 분석 결과가 준비되는 동안 전문적인 진행 상태를 보여준다.
-    setStatus("analyzing");
+    // 통화 종료 즉시 완료 화면 — 저장·분석은 서버 백그라운드
+    setStatus("ended");
 
-    queueCheckinSave({
-      transcript: finalTranscripts.map((t) => ({ role: t.role, text: t.text })),
-      stepAnswers: stepAnswersRef.current.length
-        ? stepAnswersRef.current
-        : buildCheckinStepAnswers(finalTranscripts),
-      durationSec,
-      shareWithGuardian: true,
-    })
-      .then((r) => {
-        const res = r as AnalyzeResult;
-        clearCheckinCallDraft();
-        setDraft(null);
-        setResult(res);
-        setStatus("ended");
-        onAnalyzed?.(res);
-        void recordQuality("completed", {
-          checkinId: res.checkin?.id ?? null,
-          durationSec,
-          transcripts: finalTranscripts,
-          stepAnswers: stepAnswersRef.current.length
-            ? stepAnswersRef.current
-            : buildCheckinStepAnswers(finalTranscripts),
-        }).catch((e) => console.warn("[checkin-quality] completed event failed", e));
-        void trackEvent({
-          eventName: ANALYTICS_EVENTS.VOICE_CHECK_COMPLETED,
-          userRole: "senior",
-          targetType: "health_checkin",
-          targetId: res.checkin?.id ?? null,
-          metadata: {
-            durationSeconds: durationSec,
-            conditionLevel: res.checkin?.condition_level,
-            recommendationTags: res.report?.recommendation_tags ?? [],
-          },
-        });
-        void trackEvent({
-          eventName: ANALYTICS_EVENTS.REPORT_CREATED,
-          userRole: "senior",
-          targetType: "health_report",
-          targetId: res.report?.id ?? null,
-        });
-        void trackEvent({
-          eventName: ANALYTICS_EVENTS.REPORT_SHARED_TO_CAREGIVER,
-          userRole: "senior",
-          targetType: "health_report",
-          targetId: res.report?.id ?? null,
-        });
+    void (async () => {
+      await Promise.race([
+        Promise.all(pendingSerClipTasksRef.current),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
+      pendingSerClipTasksRef.current = [];
+
+      queueCheckinSave({
+        transcript: finalTranscripts.map((t) => ({ role: t.role, text: t.text })),
+        stepAnswers: stepAnswersRef.current.length
+          ? stepAnswersRef.current
+          : buildCheckinStepAnswers(finalTranscripts),
+        durationSec,
+        shareWithGuardian: true,
+        voiceProsodySummary: summarizeProsodySession(voiceProsodyTurnsRef.current),
+        voiceSerTurnClips: voiceSerTurnClipsRef.current.length
+          ? voiceSerTurnClipsRef.current
+          : undefined,
       })
-      .catch((e) => {
-        console.error("[checkin] analyze failed", e);
-        saveDraftFromCurrentState("manual", finalTranscripts);
-        setStatus("idle");
-        toast.error("저장에 실패해서 통화를 일시저장했어요. 잠시 후 이어서 저장할 수 있어요.");
-        void recordQuality("failed", {
-          durationSec,
-          transcripts: finalTranscripts,
-          draftReason: "save_failed",
-        }).catch((err) => console.warn("[checkin-quality] failed event failed", err));
-        void trackEvent({
-          eventName: ANALYTICS_EVENTS.VOICE_CHECK_FAILED,
-          userRole: "senior",
-          targetType: "health_checkin",
+        .then((r) => {
+          const res = r as AnalyzeResult;
+          clearCheckinCallDraft();
+          setDraft(null);
+          setResult(res);
+          onAnalyzed?.(res);
+          void recordQuality("completed", {
+            checkinId: res.checkin?.id ?? null,
+            durationSec,
+            transcripts: finalTranscripts,
+            stepAnswers: stepAnswersRef.current.length
+              ? stepAnswersRef.current
+              : buildCheckinStepAnswers(finalTranscripts),
+          }).catch((e) => console.warn("[checkin-quality] completed event failed", e));
+          if (!res.processing) {
+            void trackEvent({
+              eventName: ANALYTICS_EVENTS.VOICE_CHECK_COMPLETED,
+              userRole: "senior",
+              targetType: "health_checkin",
+              targetId: res.checkin?.id ?? null,
+              metadata: {
+                durationSeconds: durationSec,
+                conditionLevel: res.checkin?.condition_level,
+                recommendationTags: res.report?.recommendation_tags ?? [],
+                voiceFusionSource: res.voiceAnalysis?.fusionSource ?? null,
+              },
+            });
+          }
+        })
+        .catch((e) => {
+          console.error("[checkin] analyze failed", e);
+          saveDraftFromCurrentState("manual", finalTranscripts);
+          setStatus("idle");
+          toast.error("저장에 실패해서 통화를 일시저장했어요. 잠시 후 이어서 저장할 수 있어요.");
+          void recordQuality("failed", {
+            durationSec,
+            transcripts: finalTranscripts,
+            draftReason: "save_failed",
+          }).catch((err) => console.warn("[checkin-quality] failed event failed", err));
+          void trackEvent({
+            eventName: ANALYTICS_EVENTS.VOICE_CHECK_FAILED,
+            userRole: "senior",
+            targetType: "health_checkin",
+          });
         });
-      });
+    })();
   };
 
   // 다른 곳(앱 부트 시 자동 재개 포함)에서 저장이 완료되면 부모에게 알린다.
@@ -1125,12 +1473,44 @@ export function DailyVoiceCheckin({
     return () => window.removeEventListener(CHECKIN_SAVED_EVENT, handler);
   }, [onAnalyzed]);
 
+  // 빠른 저장 후 서버 백그라운드 리포트 완료까지 폴링
+  useEffect(() => {
+    if (!(result as AnalyzeResult & { processing?: boolean })?.processing) return;
+    let cancelled = false;
+
+    void (async () => {
+      for (let i = 0; i < 40 && !cancelled; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        try {
+          const today = await getTodayCheckin({
+            headers: await authHeaders(),
+          } as Parameters<typeof getTodayCheckin>[0]);
+          if (today?.report?.senior_report_text) {
+            const full = { ...today, processing: false } as AnalyzeResult;
+            setResult(full);
+            onAnalyzed?.(full);
+            toast.success("오늘의 안부 리포트가 준비됐어요.");
+            return;
+          }
+        } catch {
+          /* retry */
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [(result as AnalyzeResult & { processing?: boolean })?.processing, onAnalyzed]);
+
   const toggleMute = () => {
     const stream = localStreamRef.current;
     const track = stream?.getAudioTracks()[0];
     if (!track) return;
     mutedRef.current = !mutedRef.current;
-    track.enabled = !mutedRef.current && !isAssistantSpeakingRef.current && !isProcessingTurnRef.current;
+    track.enabled = !mutedRef.current
+      && !isAssistantSpeakingRef.current
+      && !pendingAutoEndRef.current;
     setMuted(mutedRef.current);
   };
 
@@ -1190,7 +1570,8 @@ export function DailyVoiceCheckin({
   if (showCompleted && status !== "analyzing") {
     const condition = result?.checkin?.condition_level ?? todayCondition ?? "normal";
     const moodRaw = (result?.checkin as any)?.mood_status ?? todayMood ?? null;
-    const emotion = resolveEmotion(condition, moodRaw);
+    const fusedEmotionKey = result?.voiceAnalysis?.fusedEmotionKey ?? null;
+    const emotion = resolveEmotion(condition, moodRaw, fusedEmotionKey);
     const emotionAlert = resolveAlert(emotion.key, condition);
     const savedStepAnswers: CheckinStepAnswer[] = savedTurns
       .filter((turn) => (turn.user_answer ?? turn.corrected_answer ?? "").trim().length > 0)
@@ -1238,7 +1619,9 @@ export function DailyVoiceCheckin({
         <div className="flex flex-col items-center gap-5 text-center animate-result-pop">
           <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-sm font-bold text-primary">
             <Sparkles className="h-4 w-4" />
-            분석 완료
+            {(result as AnalyzeResult & { processing?: boolean })?.processing
+              ? "저장 완료 · 리포트 작성 중"
+              : "분석 완료"}
           </span>
 
           {/* 미래형 감정 시계(Emotion Orb) */}
@@ -1380,6 +1763,8 @@ export function DailyVoiceCheckin({
             className="w-full"
             condition={result?.checkin?.condition_level ?? todayCondition}
             mood={result?.checkin?.mood_status ?? todayMood}
+            fusedEmotionKey={result?.voiceAnalysis?.fusedEmotionKey ?? null}
+            voiceAnalysisSource={result?.voiceAnalysis?.fusionSource ?? null}
             checkinId={result?.checkin?.id ?? null}
           />
 
@@ -1432,11 +1817,14 @@ export function DailyVoiceCheckin({
                   ? "bg-primary/10 text-primary"
                   : turnState === "user_can_speak"
                     ? "bg-sage/15 text-sage"
+                    : turnState === "ending"
+                      ? "bg-amber-100 text-amber-900"
                     : "bg-muted text-foreground/65",
               )}
             >
-              {turnState === "ai_speaking" && "AI가 말하고 있어요. 끝나면 말씀해 주세요."}
-              {turnState === "user_can_speak" && (userSpeaking ? "말씀을 듣고 있어요. 기록 중이에요." : "지금 말씀해 주세요. 끝까지 듣고 기록할게요.")}
+              {turnState === "ai_speaking" && "AI가 질문하고 있어요. 질문이 끝나면 말씀해 주세요."}
+              {turnState === "user_can_speak" && (userSpeaking ? "말씀을 듣고 있어요. 기록 중이에요." : "질문이 끝났어요. 지금 말씀해 주세요.")}
+              {turnState === "ending" && "AI가 마무리 인사 중이에요. 잠시 후 통화가 자동으로 끝나요."}
               {turnState === "idle" && "통화를 준비하고 있어요."}
             </p>
             {urgentNotice && (
@@ -1634,7 +2022,9 @@ export function DailyVoiceCheckin({
         <div className="text-center space-y-1.5">
           <p className="text-xl font-bold text-foreground">
             {status === "idle" && (draft ? "이전 통화를 이어서 할 수 있어요" : "버튼을 눌러 통화를 시작해요")}
-            {status === "connecting" && "AI와 연결하고 있어요…"}
+            {status === "connecting" && connectPhase === "session" && "AI 연결을 준비하고 있어요…"}
+            {status === "connecting" && connectPhase === "webrtc" && "마이크와 음성 연결을 맺고 있어요…"}
+            {status === "connecting" && !connectPhase && "AI와 연결하고 있어요…"}
             {status === "analyzing" && "통화 내용을 정리하고 있어요…"}
           </p>
           {status === "idle" && !draft && (
@@ -1661,7 +2051,9 @@ export function DailyVoiceCheckin({
           )}
           {status === "connecting" && (
             <p className="text-sm text-foreground/50">
-              잠시만 기다려 주세요
+              {connectPhase === "webrtc"
+                ? "마이크 허용 창이 보이면 허용을 눌러 주세요"
+                : "잠시만 기다려 주세요"}
             </p>
           )}
         </div>

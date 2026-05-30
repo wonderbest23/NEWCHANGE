@@ -13,7 +13,11 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:voice-rules": "bun run scripts/voice-rules-judge.ts"
+    "test:voice-rules": "bun run scripts/voice-rules-judge.ts",
+    "ser:setup": "bash scripts/setup-voice-ser.sh",
+    "ser:dev": "bash scripts/run-voice-ser-dev.sh",
+    "ser:deploy-modal": "bash scripts/deploy-voice-ser-modal.sh",
+    "deploy": "npm run build && npx wrangler deploy"
   },
   "dependencies": {
     "@cloudflare/vite-plugin": "^1.25.5",

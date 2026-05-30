@@ -19,6 +19,8 @@ type Payload = {
   stepAnswers?: CheckinStepAnswer[];
   durationSec: number;
   shareWithGuardian: boolean;
+  voiceProsodySummary?: import("@/lib/checkin/voice-prosody").VoiceProsodySessionSummary | null;
+  voiceSerTurnClips?: import("@/lib/checkin/voice-ser.types").VoiceSerTurnClip[];
 };
 
 export type CheckinCallDraft = Payload & {
@@ -67,8 +69,12 @@ export function queueCheckinSave(payload: Payload) {
     });
 
   toast.promise(inflight, {
-    loading: "안부 리포트를 백그라운드에서 저장하고 있어요…",
-    success: "오늘의 안부 리포트가 준비됐어요.",
+    loading: "안부 기록을 저장하고 있어요…",
+    success: (res) => {
+      const r = res as { processing?: boolean } | null;
+      if (r?.processing) return "안부가 저장됐어요. 리포트는 곧 준비돼요.";
+      return "오늘의 안부 리포트가 준비됐어요.";
+    },
     error: (e) => {
       const msg = String((e as Error)?.message ?? e);
       if (msg.includes("DAILY_LIMIT_REACHED"))

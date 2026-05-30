@@ -122,6 +122,8 @@ function emotionRecKstDateKey() {
 export function EmotionRecommendationCollection({
   condition,
   mood,
+  fusedEmotionKey,
+  voiceAnalysisSource,
   checkinId,
   className,
   title = "감정 기반 권고 모음",
@@ -130,13 +132,20 @@ export function EmotionRecommendationCollection({
 }: {
   condition?: string | null;
   mood?: string | null;
+  /** SER·prosody 융합 감정 (있으면 텍스트-only보다 우선) */
+  fusedEmotionKey?: import("@/lib/checkin/emotion").EmotionKey | null;
+  voiceAnalysisSource?: string | null;
   checkinId?: string | null;
   className?: string;
   title?: string;
   caption?: string;
   limit?: number;
 }) {
-  const emotion = resolveEmotion((condition ?? null) as any, mood ?? null);
+  const emotion = resolveEmotion(
+    (condition ?? null) as any,
+    mood ?? null,
+    fusedEmotionKey ?? null,
+  );
   const dateKey = emotionRecKstDateKey();
   const conditionLevel = (condition ?? undefined) as
     | "good"
@@ -220,7 +229,16 @@ export function EmotionRecommendationCollection({
         <p className="mt-1 text-left text-sm leading-relaxed text-foreground/65">
           {caption ?? (
             <>
-              오늘 분석된 <span className={cn("font-bold", emotion.textTone)}>{emotion.label}</span> 신호에 맞춰 카테고리별로 하나씩 골랐어요.
+              {voiceAnalysisSource === "multimodal" || voiceAnalysisSource === "ser" ? (
+                <>
+                  오늘 말씀과 <span className="font-semibold text-foreground/80">목소리 패턴</span>을 함께 참고해{" "}
+                  <span className={cn("font-bold", emotion.textTone)}>{emotion.label}</span> 신호에 맞춰 골랐어요.
+                </>
+              ) : (
+                <>
+                  오늘 분석된 <span className={cn("font-bold", emotion.textTone)}>{emotion.label}</span> 신호에 맞춰 카테고리별로 하나씩 골랐어요.
+                </>
+              )}
             </>
           )}
         </p>

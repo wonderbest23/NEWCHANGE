@@ -35,3 +35,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Python SER 로컬 venv / 학습 manifest (Modal Volume 사용)
+services/ser/.venv/
+services/ser/training/data/

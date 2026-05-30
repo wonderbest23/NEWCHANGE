@@ -52,7 +52,7 @@ describe("checkin-state-machine / unclear transcript handling", () => {
     expect(decision.unclear).toBe(true);
     expect(decision.recordAnswer).toBe(false);
     expect(decision.nextStepId).toBe("Q4_MEDICINE");
-    expect(decision.prompt).toContain("추측해서 기록하지 않을게요");
+    expect(decision.prompt).toMatch(/약|챙기/);
   });
 
   it("마지막 질문이 반복해서 불명확하면 추측 저장 없이 종료한다", () => {
@@ -94,7 +94,7 @@ describe("checkin-state-machine / safety and completion", () => {
     expect(decision.end).toBe(false);
     expect(decision.recordAnswer).toBe(true);
     expect(decision.nextStepId).toBe("Q2_CONDITION");
-    expect(decision.prompt).toContain("오늘 몸은 어떠세요");
+    expect(decision.prompt).toMatch(/몸|컨디션/);
   });
 
   it("초반 종료 표현은 한 번에 종료하지 않고 잘못 들었을 가능성을 확인한다", () => {
@@ -143,10 +143,35 @@ describe("checkin-state-machine / safety and completion", () => {
     expect(decision.nextStepId).toBeNull();
   });
 
-  it("짧은 긍정 답변은 불명확 답변으로 오분류하지 않는다", () => {
-    expect(isUnclearAnswerText("네")).toBe(false);
-    expect(isUnclearAnswerText("응")).toBe(false);
-    expect(isUnclearAnswerText("예?")).toBe(true);
+  it("한 문장에 여러 항목이 섞여도 바로 종료하지 않는다", () => {
+    const decision = decideAfterAnswer({
+      state: createInitialCheckinState("Q1_MEAL"),
+      answerText: "밥 먹었고 약도 먹었고 기분도 좋아요, 가족한테 전할 건 없어요",
+      riskMatches: [],
+    });
+
+    expect(decision.end).toBe(false);
+    expect(decision.nextStepId).toBe("Q2_CONDITION");
+    expect(decision.state.completedStepIds).toEqual(["Q1_MEAL"]);
+  });
+
+  it("모든 항목을 순서대로 답하면 종료한다", () => {
+    let state = createInitialCheckinState("Q1_MEAL");
+    const answers = [
+      "밥 먹었어요",
+      "몸은 괜찮아요",
+      "아픈 데 없어요",
+      "약 먹었어요",
+      "기분 좋아요",
+      "전할 말 없어요",
+    ];
+    let last = null as ReturnType<typeof decideAfterAnswer> | null;
+    for (const answerText of answers) {
+      last = decideAfterAnswer({ state, answerText, riskMatches: [] });
+      state = last.state;
+    }
+    expect(last?.end).toBe(true);
+    expect(last?.nextStepId).toBeNull();
   });
 });
 

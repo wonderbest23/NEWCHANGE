@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { keepAlive } from "@/server/runtime/keep-alive.server";
 import {
   detectEvidenceBasedRisks,
   formatRiskEvidenceForReport,
@@ -39,6 +40,18 @@ const AnalyzeInput = z.object({
   stepAnswers: z.array(z.custom<CheckinStepAnswer>()).optional(),
   durationSec: z.number().int().min(0).max(3600).optional(),
   shareWithGuardian: z.boolean().optional(),
+  voiceProsodySummary: z.custom<import("@/lib/checkin/voice-prosody").VoiceProsodySessionSummary>().optional(),
+  voiceSerTurnClips: z
+    .array(
+      z.object({
+        stepId: z.string().max(40).optional(),
+        transcript: z.string().max(2000),
+        audioBase64: z.string().max(4_000_000),
+        mimeType: z.string().max(80),
+      }),
+    )
+    .max(12)
+    .optional(),
 });
 
 const ReviewStepAnswer = z.object({
@@ -195,6 +208,168 @@ async function callLovableAI(transcript: { role: string; text: string }[]): Prom
   return JSON.parse(call.function.arguments) as AnalyzedCheckin;
 }
 
+const CHECKIN_PROCESSING_SUMMARY = "오늘 안부를 기록했어요. 리포트를 작성하고 있어요.";
+
+type FinalizeCheckinParams = {
+  checkinId: string;
+  userId: string;
+  familyId: string | null;
+  data: z.infer<typeof AnalyzeInput>;
+  stepAnswers: CheckinStepAnswer[];
+  rawTranscript: string;
+  evidenceRisks: ReturnType<typeof dedupeEvidenceRisks>;
+  urgentEvidence: boolean;
+};
+
+/** LLM·SER·리포트 등 무거운 분석 — 응답 후 서버 백그라운드(waitUntil)에서 실행. */
+async function finalizeCheckinAnalysis(params: FinalizeCheckinParams): Promise<void> {
+  const { checkinId, userId, familyId, data, stepAnswers, evidenceRisks, urgentEvidence } = params;
+  const supabase = supabaseAdmin;
+
+  let analysis: AnalyzedCheckin;
+  try {
+    analysis = await callLovableAI(data.transcript);
+  } catch (e) {
+    console.error("[finalizeCheckinAnalysis] AI 실패, 기본값 저장:", e);
+    analysis = {
+      summary: "오늘의 안부를 기록했어요.",
+      condition_level: "normal",
+      meal_status: "모름",
+      sleep_status: "모름",
+      medicine_status: "모름",
+      pain_status: "모름",
+      mood_status: "모름",
+      loneliness_detected: false,
+      dizziness_detected: false,
+      urgent_detected: false,
+      tags: [],
+      senior_report: "오늘도 안부를 나눠주셔서 감사해요. 무리하지 마시고 편안한 하루 보내세요.",
+      caregiver_report: "분석 일시 오류로 상세 분류는 비어 있습니다. 통화는 정상 종료되었습니다.",
+      recommendation_tags: [],
+    };
+  }
+
+  if (evidenceRisks.length > 0) {
+    const evidenceReport = formatRiskEvidenceForReport(evidenceRisks);
+    if (urgentEvidence) {
+      analysis = {
+        ...analysis,
+        summary: "긴급 확인이 필요한 표현이 기록됐어요.",
+        condition_level: "urgent",
+        urgent_detected: true,
+        tags: mergeAnalysisTags(analysis.tags, [{ tag: "긴급_주의", confidence: 1 }]),
+        recommendation_tags: Array.from(new Set([...analysis.recommendation_tags, "긴급_주의" as CheckinTag])),
+        senior_report:
+          "오늘 통화에서 바로 확인이 필요한 표현이 있었어요. 혼자 판단하지 마시고 보호자나 119에 바로 연락해 주세요.",
+        caregiver_report: [
+          "긴급 확인이 필요한 표현이 감지되었습니다. 아래 원문과 출처 기반 근거를 확인해 주세요.",
+          "",
+          analysis.caregiver_report,
+          "",
+          "[출처 기반 위험 근거]",
+          evidenceReport,
+        ].join("\n").trim(),
+      };
+    } else {
+      analysis = {
+        ...analysis,
+        caregiver_report: [
+          analysis.caregiver_report,
+          "",
+          "[출처 기반 주의 근거]",
+          evidenceReport,
+        ].join("\n").trim(),
+      };
+    }
+  }
+
+  const { error: updateErr } = await supabase
+    .from("health_checkins")
+    .update({
+      summary: analysis.summary,
+      condition_level: analysis.condition_level,
+      meal_status: analysis.meal_status,
+      sleep_status: analysis.sleep_status,
+      medicine_status: analysis.medicine_status,
+      pain_status: analysis.pain_status,
+      mood_status: analysis.mood_status,
+      loneliness_detected: analysis.loneliness_detected,
+      dizziness_detected: analysis.dizziness_detected,
+      urgent_detected: analysis.urgent_detected,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", checkinId);
+  if (updateErr) {
+    console.error("[finalizeCheckinAnalysis] checkin update failed:", updateErr.message);
+    return;
+  }
+
+  if (analysis.tags.length > 0) {
+    await supabase.from("health_checkin_tags").insert(
+      analysis.tags.map((t) => ({
+        checkin_id: checkinId,
+        tag_name: t.tag,
+        confidence: t.confidence,
+      })),
+    );
+  }
+
+  const { error: reportErr } = await supabase.from("health_reports").insert({
+    checkin_id: checkinId,
+    senior_report_text: analysis.senior_report,
+    caregiver_report_text: analysis.caregiver_report,
+    recommendation_tags: analysis.recommendation_tags,
+  });
+  if (reportErr) {
+    console.error("[finalizeCheckinAnalysis] report insert failed:", reportErr.message);
+    return;
+  }
+
+  let voiceSerSummary: import("@/lib/checkin/voice-ser.types").VoiceSerSessionSummary | null = null;
+  if (data.voiceSerTurnClips?.length) {
+    try {
+      const { analyzeVoiceSerSession, isSerApiConfigured } = await import("./voice-ser-api.server");
+      if (isSerApiConfigured()) {
+        voiceSerSummary = await analyzeVoiceSerSession({
+          clips: data.voiceSerTurnClips,
+          conditionLevel: analysis.condition_level,
+          moodStatus: analysis.mood_status,
+          browserProsody: data.voiceProsodySummary ?? null,
+        });
+      }
+    } catch (e) {
+      console.warn("[finalizeCheckinAnalysis] SER failed:", e);
+    }
+  }
+
+  if (familyId) {
+    const { syncVoicePsychFromSeniorCheckin } = await import("./voice-psych-sync.server");
+    await syncVoicePsychFromSeniorCheckin({
+      familyId,
+      checkinId,
+      conditionLevel: analysis.condition_level,
+      moodStatus: analysis.mood_status,
+      summary: analysis.summary,
+      urgentDetected: analysis.urgent_detected,
+      lonelinessDetected: analysis.loneliness_detected,
+      dizzinessDetected: analysis.dizziness_detected,
+      voiceProsodySummary: data.voiceProsodySummary ?? null,
+      voiceSerSummary,
+    }).catch((e) => console.warn("[voice-psych-sync]", e));
+  }
+
+  if (!urgentEvidence && (analysis.condition_level === "urgent" || analysis.urgent_detected)) {
+    await createCheckinUrgentAlert({
+      userId,
+      familyId,
+      checkinId,
+      evidenceRisks,
+      transcript: data.transcript,
+      caregiverReport: analysis.caregiver_report,
+    });
+  }
+}
+
 export const analyzeAndSaveCheckin = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: unknown) => AnalyzeInput.parse(data))
@@ -238,62 +413,18 @@ export const analyzeAndSaveCheckin = createServerFn({ method: "POST" })
     ]);
     const urgentEvidence = hasUrgentEvidenceRisk(evidenceRisks);
 
-    let analysis: AnalyzedCheckin;
-    try {
-      analysis = await callLovableAI(data.transcript);
-    } catch (e) {
-      console.error("[analyzeAndSaveCheckin] AI 실패, 기본값 저장:", e);
-      analysis = {
-        summary: "오늘의 안부를 기록했어요.",
-        condition_level: "normal",
-        meal_status: "모름",
-        sleep_status: "모름",
-        medicine_status: "모름",
-        pain_status: "모름",
-        mood_status: "모름",
-        loneliness_detected: false,
-        dizziness_detected: false,
-        urgent_detected: false,
-        tags: [],
-        senior_report: "오늘도 안부를 나눠주셔서 감사해요. 무리하지 마시고 편안한 하루 보내세요.",
-        caregiver_report: "분석 일시 오류로 상세 분류는 비어 있습니다. 통화는 정상 종료되었습니다.",
-        recommendation_tags: [],
-      };
-    }
-
-    if (evidenceRisks.length > 0) {
-      const evidenceReport = formatRiskEvidenceForReport(evidenceRisks);
-      if (urgentEvidence) {
-        analysis = {
-          ...analysis,
-          summary: "긴급 확인이 필요한 표현이 기록됐어요.",
-          condition_level: "urgent",
-          urgent_detected: true,
-          tags: mergeAnalysisTags(analysis.tags, [{ tag: "긴급_주의", confidence: 1 }]),
-          recommendation_tags: Array.from(new Set([...analysis.recommendation_tags, "긴급_주의" as CheckinTag])),
-          senior_report:
-            "오늘 통화에서 바로 확인이 필요한 표현이 있었어요. 혼자 판단하지 마시고 보호자나 119에 바로 연락해 주세요.",
-          caregiver_report: [
-            "긴급 확인이 필요한 표현이 감지되었습니다. 아래 원문과 출처 기반 근거를 확인해 주세요.",
-            "",
-            analysis.caregiver_report,
-            "",
-            "[출처 기반 위험 근거]",
-            evidenceReport,
-          ].join("\n").trim(),
-        };
-      } else {
-        analysis = {
-          ...analysis,
-          caregiver_report: [
-            analysis.caregiver_report,
-            "",
-            "[출처 기반 주의 근거]",
-            evidenceReport,
-          ].join("\n").trim(),
-        };
-      }
-    }
+    const derived = deriveStatusesFromStepAnswers(
+      stepAnswers.map((answer) => ({
+        stepId: answer.stepId,
+        stepLabel: answer.stepLabel,
+        question: answer.question,
+        answer: answer.answer,
+        answeredAt: answer.answeredAt,
+      })),
+    );
+    const initialCondition = urgentEvidence
+      ? "urgent"
+      : (derived.condition_level ?? "normal");
 
     const { data: checkin, error: checkinErr } = await supabase
       .from("health_checkins")
@@ -301,16 +432,18 @@ export const analyzeAndSaveCheckin = createServerFn({ method: "POST" })
         senior_user_id: userId,
         family_id: familyId,
         raw_transcript: rawTranscript,
-        summary: analysis.summary,
-        condition_level: analysis.condition_level,
-        meal_status: analysis.meal_status,
-        sleep_status: analysis.sleep_status,
-        medicine_status: analysis.medicine_status,
-        pain_status: analysis.pain_status,
-        mood_status: analysis.mood_status,
-        loneliness_detected: analysis.loneliness_detected,
-        dizziness_detected: analysis.dizziness_detected,
-        urgent_detected: analysis.urgent_detected,
+        summary: urgentEvidence
+          ? "긴급 확인이 필요한 표현이 기록됐어요."
+          : CHECKIN_PROCESSING_SUMMARY,
+        condition_level: initialCondition,
+        meal_status: derived.meal_status,
+        sleep_status: null,
+        medicine_status: derived.medicine_status,
+        pain_status: derived.pain_status,
+        mood_status: derived.mood_status,
+        loneliness_detected: derived.loneliness_detected,
+        dizziness_detected: derived.dizziness_detected,
+        urgent_detected: urgentEvidence,
         caregiver_shared: data.shareWithGuardian ?? false,
         duration_sec: data.durationSec ?? null,
       })
@@ -321,76 +454,36 @@ export const analyzeAndSaveCheckin = createServerFn({ method: "POST" })
     const turnIdByStep = await saveCheckinTurns(supabase, checkin.id, stepAnswers);
     await updateCareMemoryItems(supabase, userId, checkin.id, turnIdByStep, stepAnswers);
 
-    if (analysis.tags.length > 0) {
-      await supabase.from("health_checkin_tags").insert(
-        analysis.tags.map((t) => ({
-          checkin_id: checkin.id,
-          tag_name: t.tag,
-          confidence: t.confidence,
-        })),
-      );
-    }
-
-    const { data: report, error: reportErr } = await supabase
-      .from("health_reports")
-      .insert({
-        checkin_id: checkin.id,
-        senior_report_text: analysis.senior_report,
-        caregiver_report_text: analysis.caregiver_report,
-        recommendation_tags: analysis.recommendation_tags,
-      })
-      .select("id, senior_report_text, caregiver_report_text, recommendation_tags")
-      .single();
-    if (reportErr || !report) throw new Error(`리포트 저장 실패: ${reportErr?.message}`);
-
-    if (familyId) {
-      const { syncVoicePsychFromSeniorCheckin } = await import("./voice-psych-sync.server");
-      await syncVoicePsychFromSeniorCheckin({
-        familyId,
-        checkinId: checkin.id,
-        conditionLevel: analysis.condition_level,
-        moodStatus: analysis.mood_status,
-        summary: analysis.summary,
-        urgentDetected: analysis.urgent_detected,
-        lonelinessDetected: analysis.loneliness_detected,
-        dizzinessDetected: analysis.dizziness_detected,
-      }).catch((e) => console.warn("[voice-psych-sync]", e));
-    }
-
-    if (urgentEvidence || analysis.condition_level === "urgent" || analysis.urgent_detected) {
+    if (urgentEvidence) {
       await createCheckinUrgentAlert({
         userId,
         familyId,
         checkinId: checkin.id,
         evidenceRisks,
         transcript: data.transcript,
-        caregiverReport: analysis.caregiver_report,
+        caregiverReport: formatRiskEvidenceForReport(evidenceRisks),
       });
     }
 
-    // 추천 동네 자원 (태그 기반)
-    let recommendations: Array<{
-      id: string;
-      name: string;
-      resource_type: string;
-      region_sigungu: string;
-      phone: string | null;
-      description: string | null;
-    }> = [];
-    if (analysis.recommendation_tags.length > 0) {
-      const { data: recs } = await supabase
-        .from("local_resources")
-        .select("id, name, resource_type, region_sigungu, phone, description")
-        .overlaps("recommendation_tags", analysis.recommendation_tags)
-        .eq("is_active", true)
-        .limit(4);
-      recommendations = recs ?? [];
-    }
+    keepAlive(
+      finalizeCheckinAnalysis({
+        checkinId: checkin.id,
+        userId,
+        familyId,
+        data,
+        stepAnswers,
+        rawTranscript,
+        evidenceRisks,
+        urgentEvidence,
+      }),
+    );
 
     return {
       checkin,
-      report,
-      recommendations,
+      report: null,
+      recommendations: [],
+      voiceAnalysis: null,
+      processing: true as const,
     };
   });
 
